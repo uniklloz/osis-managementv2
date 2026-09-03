@@ -38,6 +38,18 @@ import BadanPengurusSection, {
 import PendingReviewSection from "./sub-components/PendingReviewSection";
 import { useAnggotaDetailOverlay } from "./sub-components/AnggotaDetailOverlay";
 
+function statusAnggota(item) {
+  const status = item?.[FIELD.ANGGOTA.STATUS_KEANGGOTAAN] || item?.membershipStatus;
+
+  return {
+    pending_review: STATUS_KEANGGOTAAN.MENUNGGU_REVIEW,
+    active: STATUS_KEANGGOTAAN.AKTIF,
+    inactive: STATUS_KEANGGOTAAN.NONAKTIF,
+    suspended: STATUS_KEANGGOTAAN.DITANGGUHKAN,
+    rejected: "ditolak",
+  }[status] || status;
+}
+
 export default function DataAnggotaPembina() {
   const { colRef } = useDb();
   const { openAnggotaDetail } = useAnggotaDetailOverlay();
@@ -85,19 +97,25 @@ export default function DataAnggotaPembina() {
 
     const memberRows = rowsOf(members).map((item) => ({
       ...item,
+      [FIELD.ANGGOTA.STATUS_KEANGGOTAAN]: statusAnggota(item),
+      [FIELD.ANGGOTA.NAMA_LENGKAP]: item[FIELD.ANGGOTA.NAMA_LENGKAP] || item.fullName,
+      [FIELD.ANGGOTA.NAMA_KELAS]: item[FIELD.ANGGOTA.NAMA_KELAS] || item.className,
+      [FIELD.ANGGOTA.ID_DIVISI]: item[FIELD.ANGGOTA.ID_DIVISI] || item.divisionId || item.divisionInterest,
+      [FIELD.ANGGOTA.ID_PENGGUNA]: item[FIELD.ANGGOTA.ID_PENGGUNA] || item.userId || item.uid,
+      [FIELD.ANGGOTA.DIAJUKAN_PADA]: item[FIELD.ANGGOTA.DIAJUKAN_PADA] || item.submittedAt,
       divisi: divisionMap.get(item[FIELD.ANGGOTA.ID_DIVISI]) || null,
       periodeData: periodMap.get(item[FIELD.ANGGOTA.ID_PERIODE]) || null,
       ringkasan: summaryMap.get(item.id) || null,
     }));
 
     const official = memberRows.filter((item) =>
-      STATUS_RESMI_ANGGOTA.includes(item[FIELD.ANGGOTA.STATUS_KEANGGOTAAN])
+      STATUS_RESMI_ANGGOTA.includes(statusAnggota(item))
     );
 
     const pendingMembers = sortDateDesc(
       memberRows
         .filter(
-          (item) => item[FIELD.ANGGOTA.STATUS_KEANGGOTAAN] === STATUS_KEANGGOTAAN.MENUNGGU_REVIEW
+          (item) => statusAnggota(item) === STATUS_KEANGGOTAAN.MENUNGGU_REVIEW
         )
         .map((item) => ({
           ...item,

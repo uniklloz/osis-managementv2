@@ -239,6 +239,7 @@ export default function PengajuanKegiatanCollapsible({
                       <th className="px-5 py-4">Divisi / Sekbid</th>
                       <th className="px-5 py-4">Rencana Pelaksanaan</th>
                       <th className="px-5 py-4">Peserta</th>
+                      <th className="px-5 py-4">Proposal</th>
                       <th className="px-5 py-4 text-center">Status</th>
                       <th className="px-5 py-4 text-right">Aksi</th>
                     </tr>
@@ -354,6 +355,23 @@ function PengajuanRow({ activity, onOpenReview }) {
 
       <td className="px-5 py-4 text-sm font-semibold text-text">
         {jumlahPeserta} anggota
+      </td>
+
+      <td className="px-5 py-4">
+        {activity?.proposal?.urlFile ? (
+          <a
+            href={activity.proposal.urlFile}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(event) => event.stopPropagation()}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs font-bold text-primary hover:bg-primary/10"
+          >
+            <AppIcon name="description" size={15} />
+            Lihat Proposal
+          </a>
+        ) : (
+          <span className="text-xs text-text-muted">Belum tersedia</span>
+        )}
       </td>
 
       <td className="px-5 py-4 text-center">

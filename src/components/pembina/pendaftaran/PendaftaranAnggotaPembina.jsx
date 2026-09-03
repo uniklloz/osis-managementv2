@@ -45,6 +45,30 @@ import { useOverlay } from "@/context/ui/OverlayContext";
  */
 const REVIEWER_ID = "user-pembina-001";
 
+function normalizeRegistration(item) {
+  const status = item.statusKeanggotaan || item.membershipStatus || "";
+  const normalizedStatus = {
+    menunggu_review: "pending_review",
+    aktif: "active",
+    nonaktif: "inactive",
+    ditangguhkan: "suspended",
+    ditolak: "rejected",
+  }[status] || status;
+
+  return {
+    ...item,
+    fullName: item.fullName || item.namaLengkap || "",
+    className: item.className || item.namaKelas || "",
+    divisionInterest: item.divisionInterest || item.idDivisi || "",
+    divisionId: item.divisionId || item.idDivisi || "",
+    userId: item.userId || item.idPengguna || null,
+    membershipStatus: normalizedStatus,
+    submittedAt: item.submittedAt || item.diajukanPada || null,
+    reviewedAt: item.reviewedAt || item.ditinjauPada || null,
+    reviewNote: item.reviewNote || item.catatanReview || null,
+  };
+}
+
 export default function PendaftaranAnggotaPembina() {
   const {
     db,
@@ -123,7 +147,7 @@ export default function PendaftaranAnggotaPembina() {
     const logs = rowsOf(reviewLogs);
 
     const registrations = sortDateDesc(
-      rowsOf(members).filter(
+      rowsOf(members).map(normalizeRegistration).filter(
         (item) =>
           [
             "pending_review",
@@ -228,26 +252,11 @@ export default function PendaftaranAnggotaPembina() {
     divisionFilter,
   ]);
 
-  useEffect(() => {
-    if (
-      data.filtered.length > 0 &&
-      !data.filtered.some(
-        (item) =>
-          item.id === selectedId
-      )
-    ) {
-      setSelectedId(
-        data.filtered[0].id
-      );
-    }
-
-    if (
-      data.filtered.length === 0 &&
-      selectedId
-    ) {
-      setSelectedId("");
-    }
-  }, [data.filtered, selectedId]);
+  const selectedRegistrationId = data.filtered.some(
+    (item) => item.id === selectedId
+  )
+    ? selectedId
+    : data.filtered[0]?.id || "";
 
   useEffect(() => {
     if (!feedback) {
@@ -297,6 +306,12 @@ export default function PendaftaranAnggotaPembina() {
         member.uid ||
         null;
 
+      if (isApproved && !applicantUserId) {
+        throw new Error(
+          "Pendaftaran tidak memiliki relasi idPengguna ke akun pengguna."
+        );
+      }
+
       const batch = writeBatch(db);
       const now = serverTimestamp();
 
@@ -317,6 +332,7 @@ export default function PendaftaranAnggotaPembina() {
         membershipStatus: isApproved
           ? "active"
           : "rejected",
+        statusKeanggotaan: isApproved ? "aktif" : "ditolak",
 
         reviewedBy: REVIEWER_ID,
         reviewedAt: now,
@@ -324,12 +340,18 @@ export default function PendaftaranAnggotaPembina() {
         reviewNote: isApproved
           ? "Pendaftaran disetujui oleh pembina."
           : cleanReason,
+        catatanReview: isApproved
+          ? "Pendaftaran disetujui oleh pembina."
+          : cleanReason,
 
         updatedAt: now,
+        diperbaruiPada: now,
+        ditinjauPada: now,
 
         ...(isApproved
           ? {
               joinedAt: now,
+              bergabungPada: now,
 
               organisationPosition:
                 member.organisationPosition ||
@@ -662,7 +684,7 @@ export default function PendaftaranAnggotaPembina() {
                       )
                     }
                     className={`flex w-full items-center gap-4 p-5 text-left transition ${
-                      selectedId ===
+                      selectedRegistrationId ===
                       member.id
                         ? "bg-primary/5"
                         : "hover:bg-input/40"

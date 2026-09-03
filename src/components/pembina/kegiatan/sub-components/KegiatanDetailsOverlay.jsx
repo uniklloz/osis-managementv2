@@ -473,6 +473,36 @@ export default function KegiatanDetailsModal({ activity, onClose }) {
     }
   };
 
+  const handleRequestProposalRevision = async () => {
+    if (!proposal?.id || finalized || rejecting) return;
+
+    setRejecting(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const waktu = serverTimestamp();
+      await updateDoc("Proposal", proposal.id, {
+        status: STATUS_PROPOSAL.PERLU_REVISI,
+        diperbaruiPada: waktu,
+      });
+      await updateDoc("Kegiatan", activity.id, {
+        statusProposal: STATUS_PROPOSAL.PERLU_REVISI,
+        diperbaruiPada: waktu,
+      });
+      setProposal((current) => ({
+        ...current,
+        status: STATUS_PROPOSAL.PERLU_REVISI,
+      }));
+      setMessage("Proposal dikembalikan untuk diperbaiki oleh anggota.");
+    } catch (revisionError) {
+      console.error("MINTA REVISI PROPOSAL ERROR:", revisionError);
+      setError(revisionError?.message || "Proposal belum berhasil dikembalikan untuk revisi.");
+    } finally {
+      setRejecting(false);
+    }
+  };
+
   const handleFinalize = async () => {
     if (!canFinalize || finalizing) return;
     setFinalizing(true);
@@ -965,6 +995,18 @@ export default function KegiatanDetailsModal({ activity, onClose }) {
               >
                 Tutup
               </button>
+
+              {isProgramKerja && proposal && !finalized && (
+                <button
+                  type="button"
+                  disabled={rejecting || finalizing}
+                  onClick={handleRequestProposalRevision}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm font-bold text-amber-700 transition hover:bg-amber-100 disabled:opacity-50"
+                >
+                  <AppIcon name="edit_note" size={18} />
+                  {rejecting ? "Memproses..." : "Minta Revisi"}
+                </button>
+              )}
 
               {isProgramKerja && proposal && !finalized && (
                 <button

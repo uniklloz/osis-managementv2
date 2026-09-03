@@ -35,7 +35,7 @@ export default function PendingReviewSection({ members = [] }) {
 
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="font-bold text-text">Pengajuan Anggota</h2>
+              <h2 className="font-bold text-text">Calon Anggota</h2>
 
               <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
                 {members.length} menunggu review

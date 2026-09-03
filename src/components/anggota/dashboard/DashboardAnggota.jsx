@@ -6,7 +6,6 @@ import { useMemo } from "react";
 import AppIcon from "@/components/global/AppIcon";
 import { useDb } from "@/context/DbContext";
 import { useCollection } from "@/hooks/useCollection";
-import { useDoc } from "@/hooks/useDoc";
 import { useCurrentMember } from "@/components/anggota/_shared/useCurrentMember";
 import {
   formatShortDate,
@@ -152,10 +151,6 @@ export default function DashboardAnggota() {
     enabled: true,
   });
 
-  const contacts = useDoc("KontakSistem", "osis-sma-mutiara-2", {
-    enabled: true,
-  });
-
   const loading =
     memberLoading ||
     attendance.loading ||
@@ -164,8 +159,7 @@ export default function DashboardAnggota() {
     activities.loading ||
     sessions.loading ||
     announcements.loading ||
-    divisions.loading ||
-    contacts.loading;
+    divisions.loading;
 
   const error =
     memberError ||
@@ -175,8 +169,7 @@ export default function DashboardAnggota() {
     activities.error ||
     sessions.error ||
     announcements.error ||
-    divisions.error ||
-    contacts.error;
+    divisions.error;
 
   const data = useMemo(() => {
     const activityRows = rowsOf(activities);
@@ -326,25 +319,6 @@ export default function DashboardAnggota() {
           accent="green"
         />
 
-        <article className="relative overflow-hidden rounded-2xl bg-primary p-5 text-white shadow-sm">
-          <p className="text-xs font-medium opacity-80">Butuh Bantuan?</p>
-          <h2 className="mt-2 text-lg font-bold">Hubungi Sekretaris</h2>
-          <p className="mt-2 max-w-[220px] text-xs leading-5 opacity-80">
-            {contacts.data?.secretary?.name ||
-              contacts.data?.sekretaris?.nama ||
-              "Kontak sekretaris belum tersedia."}
-          </p>
-          <button
-            type="button"
-            disabled
-            className="mt-5 rounded-xl bg-white px-4 py-2 text-xs font-bold text-primary opacity-90"
-          >
-            Hubungi Admin
-          </button>
-          <div className="absolute -bottom-4 -right-3 opacity-15">
-            <AppIcon name="help_outline" size={86} />
-          </div>
-        </article>
       </section>
 
       <section className="mt-7 grid grid-cols-1 gap-6 xl:grid-cols-5">

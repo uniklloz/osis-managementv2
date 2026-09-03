@@ -1,10 +1,16 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import AppIcon from "@/components/global/AppIcon";
 import { useDb } from "@/context/DbContext";
 import { useOverlay } from "@/context/ui/OverlayContext";
+import { db } from "@/lib/firebase-config";
+import { collection, doc, writeBatch } from "firebase/firestore";
+import {
+  uploadProposalCloudinary,
+  validasiFileProposal,
+} from "@/lib/uploadProposalCloudinary";
 import { buatIdReferensiKegiatan } from "@/lib/codefication";
 import {
   JENIS_KEGIATAN,
@@ -94,7 +100,7 @@ export function useAjukanRapatOverlay() {
   const { openOverlay, closeOverlay } = useOverlay();
 
   const openAjukanRapat = useCallback(
-    ({ member, divisi }) => {
+    ({ member, divisi, jenisKegiatan = JENIS_KEGIATAN.RAPAT }) => {
       if (!member?.id) return;
 
       openOverlay({
@@ -103,6 +109,7 @@ export function useAjukanRapatOverlay() {
           <AjukanRapatModal
             member={member}
             divisi={divisi}
+            jenisKegiatan={jenisKegiatan}
             onClose={() => closeOverlay()}
           />
         ),
@@ -114,13 +121,20 @@ export function useAjukanRapatOverlay() {
   return { openAjukanRapat };
 }
 
-export default function AjukanRapatModal({ member, divisi, onClose }) {
-  const { addDoc, serverTimestamp } = useDb();
+export default function AjukanRapatModal({
+  member,
+  divisi,
+  jenisKegiatan = JENIS_KEGIATAN.RAPAT,
+  onClose,
+}) {
+  const { serverTimestamp } = useDb();
 
   const [form, setForm] = useState(() => ({ ...DRAF_RAPAT }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(null);
+  const [selectedProposalFile, setSelectedProposalFile] = useState(null);
+  const proposalInputRef = useRef(null);
 
   const [participantPickerMode, setParticipantPickerMode] = useState(null);
   const [participantSource, setParticipantSource] = useState(null);
@@ -193,6 +207,21 @@ export default function AjukanRapatModal({ member, divisi, onClose }) {
     );
   };
 
+  const handleProposalFileChange = (event) => {
+    const file = event.target.files?.[0] || null;
+    if (!file) return;
+
+    const validationError = validasiFileProposal(file);
+    if (validationError) {
+      setError(validationError);
+      event.target.value = "";
+      return;
+    }
+
+    setSelectedProposalFile(file);
+    setError("");
+  };
+
   const validate = () => {
     if (!member?.id) return "Data anggota tidak ditemukan.";
     if (!member?.idDivisi) return "Anggota belum memiliki relasi Divisi/Sekbid.";
@@ -223,6 +252,10 @@ export default function AjukanRapatModal({ member, divisi, onClose }) {
       return "Pilih minimal satu peserta rapat.";
     }
 
+    if (!selectedProposalFile) {
+      return "File proposal wajib diunggah sebelum mengirim pengajuan.";
+    }
+
     return "";
   };
 
@@ -241,11 +274,12 @@ export default function AjukanRapatModal({ member, divisi, onClose }) {
 
     try {
       const tahun = Number(String(form.tanggal).slice(0, 4));
-      const idReferensi = await buatIdReferensiKegiatan(JENIS_KEGIATAN.RAPAT, {
+      const idReferensi = await buatIdReferensiKegiatan(jenisKegiatan, {
         tahun,
       });
 
       const waktu = serverTimestamp();
+      const uploadedFile = await uploadProposalCloudinary(selectedProposalFile);
       const jadwalRencana = buatJadwalRencana({
         tanggal: form.tanggal,
         waktuMulai: form.waktuMulai,
@@ -264,11 +298,14 @@ export default function AjukanRapatModal({ member, divisi, onClose }) {
         jumlahPeserta: idPesertaRencana.length,
       };
 
+      const kegiatanRef = doc(collection(db, KOLEKSI.KEGIATAN));
+      const proposalRef = doc(collection(db, "Proposal"));
+
       const payload = buatPayloadKegiatan({
         idReferensi,
         namaKegiatan: form.namaRapat.trim(),
         deskripsi: form.agenda.trim(),
-        jenisKegiatan: JENIS_KEGIATAN.RAPAT,
+        jenisKegiatan,
         lokasi: form.lokasi.trim(),
         idPeriode: member.idPeriode,
 
@@ -295,8 +332,8 @@ export default function AjukanRapatModal({ member, divisi, onClose }) {
         idDivisi: member.idDivisi,
         idPenanggungJawab: member.id,
         idAnggotaPanitia: [],
-        idProposal: null,
-        statusProposal: null,
+        idProposal: proposalRef.id,
+        statusProposal: "menunggu_review",
         snapshotJadwalProposal: null,
         statusTim: null,
 
@@ -310,9 +347,12 @@ export default function AjukanRapatModal({ member, divisi, onClose }) {
         kapasitasPeserta: idPesertaRencana.length,
         pesertaRencana,
 
-        pengajuanRapat: {
+        [jenisKegiatan === JENIS_KEGIATAN.RAPAT
+          ? "pengajuanRapat"
+          : "pengajuanProgramKerja"]: {
           sumber: "anggota",
           status: "menunggu_review",
+          jenisKegiatan,
           idPengaju: member.id,
           idPengguna: member.idPengguna || null,
           idDivisiPengaju: member.idDivisi,
@@ -326,10 +366,33 @@ export default function AjukanRapatModal({ member, divisi, onClose }) {
         diperbaruiPada: waktu,
       });
 
-      const created = await addDoc(KOLEKSI.KEGIATAN, payload);
+      const proposalPayload = {
+        idKegiatan: kegiatanRef.id,
+        idPengunggah: member.id,
+        uploadedBy: member.id,
+        namaKegiatan: form.namaRapat.trim(),
+        namaFile: uploadedFile.namaFile,
+        ukuranFileByte: uploadedFile.ukuranFileByte,
+        tipeFile: uploadedFile.tipeFile,
+        urlFile: uploadedFile.urlFile,
+        publicIdFile: uploadedFile.publicIdFile,
+        assetIdFile: uploadedFile.assetIdFile,
+        resourceTypeFile: uploadedFile.resourceTypeFile,
+        formatFile: uploadedFile.formatFile,
+        versionCloudinary: uploadedFile.versionCloudinary,
+        status: "menunggu_review",
+        diajukanPada: waktu,
+        submittedAt: waktu,
+        diperbaruiPada: waktu,
+      };
+
+      const batch = writeBatch(db);
+      batch.set(kegiatanRef, payload);
+      batch.set(proposalRef, proposalPayload);
+      await batch.commit();
 
       setSuccess({
-        id: created.id,
+        id: kegiatanRef.id,
         idReferensi,
       });
     } catch (submitError) {
@@ -367,14 +430,15 @@ export default function AjukanRapatModal({ member, divisi, onClose }) {
         <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-border bg-card/95 p-5 backdrop-blur sm:p-6">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.14em] text-primary">
-              Pengajuan Rapat
+              {jenisKegiatan === JENIS_KEGIATAN.RAPAT
+                ? "Pengajuan Rapat"
+                : "Pengajuan Program Kerja"}
             </p>
             <h2 className="mt-1 text-xl font-bold text-text sm:text-2xl">
-              Ajukan Rapat OSIS
+              Ajukan Kegiatan OSIS
             </h2>
             <p className="mt-2 max-w-xl text-sm leading-6 text-text-muted">
-              Kirim usulan agenda, jadwal, dan peserta rapat. Rapat tidak membutuhkan
-              proposal dan akan masuk ke daftar review Pembina sebelum difinalisasi.
+              Kirim usulan agenda, jadwal, peserta, dan proposal kegiatan untuk ditinjau Pembina.
             </p>
           </div>
 
@@ -395,10 +459,10 @@ export default function AjukanRapatModal({ member, divisi, onClose }) {
                 <AppIcon name="check" size={28} />
               </div>
               <h3 className="mt-4 text-lg font-bold text-emerald-900">
-                Pengajuan rapat terkirim
+                Pengajuan kegiatan terkirim
               </h3>
               <p className="mt-2 text-sm leading-6 text-emerald-800">
-                Kode rapat <span className="font-bold">{success.idReferensi}</span>{" "}
+                Kode kegiatan <span className="font-bold">{success.idReferensi}</span>{" "}
                 sudah dibuat dan menunggu review Pembina.
               </p>
               <button
@@ -438,15 +502,19 @@ export default function AjukanRapatModal({ member, divisi, onClose }) {
 
             <FormSection
               icon="edit_calendar"
-              title="Agenda Rapat"
-              description="Isi identitas dan tujuan rapat yang ingin diajukan."
+              title={jenisKegiatan === JENIS_KEGIATAN.RAPAT ? "Agenda Rapat" : "Program Kerja"}
+              description={jenisKegiatan === JENIS_KEGIATAN.RAPAT
+                ? "Isi identitas dan tujuan rapat yang ingin diajukan."
+                : "Isi identitas dan tujuan program kerja yang ingin diajukan."}
             >
               <FormField label="Nama / Judul Rapat" required>
                 <input
                   type="text"
                   value={form.namaRapat}
                   onChange={update("namaRapat")}
-                  placeholder="Contoh: Rapat Koordinasi Persiapan HUT RI"
+                  placeholder={jenisKegiatan === JENIS_KEGIATAN.RAPAT
+                    ? "Contoh: Rapat Koordinasi Persiapan HUT RI"
+                    : "Contoh: Bakti Sosial Sekolah"}
                   maxLength={120}
                   className={inputClass}
                 />
@@ -456,12 +524,41 @@ export default function AjukanRapatModal({ member, divisi, onClose }) {
                 <textarea
                   value={form.agenda}
                   onChange={update("agenda")}
-                  placeholder="Jelaskan pokok bahasan dan hasil yang ingin dicapai dari rapat."
+                  placeholder={jenisKegiatan === JENIS_KEGIATAN.RAPAT
+                    ? "Jelaskan pokok bahasan dan hasil yang ingin dicapai dari rapat."
+                    : "Jelaskan tujuan, sasaran, dan hasil yang ingin dicapai dari program kerja."}
                   rows={4}
                   maxLength={700}
                   className={`${inputClass} resize-y py-3`}
                 />
               </FormField>
+            </FormSection>
+
+            <FormSection
+              icon="upload_file"
+              title="Proposal Kegiatan"
+              description="Unggah proposal dalam format PDF, DOC, atau DOCX, maksimal 10 MB."
+            >
+              <input
+                ref={proposalInputRef}
+                type="file"
+                accept=".pdf,.doc,.docx"
+                className="hidden"
+                onChange={handleProposalFileChange}
+              />
+              <button
+                type="button"
+                onClick={() => proposalInputRef.current?.click()}
+                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/5 px-4 text-sm font-bold text-primary transition hover:bg-primary/10"
+              >
+                <AppIcon name="upload_file" size={19} />
+                {selectedProposalFile ? "Ganti File Proposal" : "Pilih File Proposal"}
+              </button>
+              {selectedProposalFile && (
+                <p className="truncate rounded-xl border border-border bg-card px-4 py-3 text-sm font-semibold text-text">
+                  {selectedProposalFile.name}
+                </p>
+              )}
             </FormSection>
 
             <FormSection
@@ -522,7 +619,7 @@ export default function AjukanRapatModal({ member, divisi, onClose }) {
 
             <FormSection
               icon="groups"
-              title="Peserta Rapat"
+                title={jenisKegiatan === JENIS_KEGIATAN.RAPAT ? "Peserta Rapat" : "Peserta Program Kerja"}
               description="Pilih kelompok peserta, lalu sesuaikan daftar dengan mencentang atau menghapus centang anggota tertentu. Anggota lain juga dapat ditambahkan secara manual."
             >
               <div className="flex flex-col gap-3 sm:flex-row">
@@ -635,7 +732,7 @@ export default function AjukanRapatModal({ member, divisi, onClose }) {
                 className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-sm font-bold text-white transition hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <AppIcon name="send" size={19} />
-                {saving ? "Mengirim pengajuan..." : "Kirim Pengajuan Rapat"}
+                {saving ? "Mengirim pengajuan..." : `Kirim Pengajuan ${jenisKegiatan === JENIS_KEGIATAN.RAPAT ? "Rapat" : "Program Kerja"}`}
               </button>
             </div>
           </form>

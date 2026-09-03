@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import AppIcon from "@/components/global/AppIcon";
 import { useDb } from "@/context/DbContext";
@@ -12,7 +12,6 @@ import {
   getInitials,
 } from "@/components/anggota/_shared/formatters";
 import {
-  DisabledAction,
   PageError,
   PageHeading,
   PageLoading,
@@ -72,6 +71,12 @@ export default function BiodataAnggota() {
 
   const loading = memberLoading || divisions.loading || periods.loading;
   const error = memberError || divisions.error || periods.error;
+  const { updateDoc, serverTimestamp } = useDb();
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [formMessage, setFormMessage] = useState("");
+  const [form, setForm] = useState({});
 
   const data = useMemo(() => {
     const divisionMap = new Map(
@@ -85,7 +90,7 @@ export default function BiodataAnggota() {
         : null,
       period: member?.idPeriode ? periodMap.get(member.idPeriode) || null : null,
     };
-  }, [divisions, periods, member?.idDivisi, member?.idPeriode]);
+  }, [divisions, periods, member]);
 
   if (loading) {
     return <PageLoading message="Memuat biodata anggota..." />;
@@ -104,6 +109,68 @@ export default function BiodataAnggota() {
     );
   }
 
+  const startEditing = () => {
+    setForm({
+      namaLengkap: member.namaLengkap || "",
+      nis: member.nis || "",
+      namaKelas: member.namaKelas || "",
+      jenisKelamin: member.jenisKelamin || "",
+      nomorTelepon: member.nomorTelepon || "",
+      alamat: member.alamat || "",
+      motivasi: member.motivasi || "",
+      pengalamanOrganisasi: member.pengalamanOrganisasi || "",
+    });
+    setFormError("");
+    setFormMessage("");
+    setEditing(true);
+  };
+
+  const updateForm = (event) => {
+    const { name, value } = event.target;
+    setForm((current) => ({ ...current, [name]: value }));
+    setFormError("");
+    setFormMessage("");
+  };
+
+  const handleSave = async (event) => {
+    event.preventDefault();
+
+    if (!form.namaLengkap.trim() || !form.nis.trim() || !form.namaKelas) {
+      setFormError("Nama lengkap, NIS, dan kelas wajib diisi.");
+      return;
+    }
+
+    if (!form.nomorTelepon.trim() || !form.alamat.trim()) {
+      setFormError("Nomor telepon dan alamat wajib diisi.");
+      return;
+    }
+
+    setSaving(true);
+    setFormError("");
+    setFormMessage("");
+
+    try {
+      await updateDoc("Anggota", member.id, {
+        namaLengkap: form.namaLengkap.trim(),
+        nis: form.nis.trim(),
+        namaKelas: form.namaKelas,
+        jenisKelamin: form.jenisKelamin,
+        nomorTelepon: form.nomorTelepon.trim(),
+        alamat: form.alamat.trim(),
+        motivasi: form.motivasi.trim(),
+        pengalamanOrganisasi: form.pengalamanOrganisasi.trim() || null,
+        diperbaruiPada: serverTimestamp(),
+      });
+      setEditing(false);
+      setFormMessage("Data biodata berhasil diperbarui.");
+    } catch (saveError) {
+      console.error("UPDATE BIODATA ANGGOTA ERROR:", saveError);
+      setFormError("Data biodata belum berhasil disimpan. Periksa koneksi dan izin akses.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div>
       <PageHeading
@@ -112,10 +179,21 @@ export default function BiodataAnggota() {
         description="Informasi pribadi, kontak, dan posisi organisasi yang tersimpan di Firestore."
         action={
           <div className="flex flex-wrap gap-3">
-            <DisabledAction icon="arrow_back" variant="outline">
+            <button
+              type="button"
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-primary px-4 text-sm font-semibold text-primary hover:bg-primary/5"
+            >
+              <AppIcon name="arrow_back" size={18} />
               Kembali
-            </DisabledAction>
-            <DisabledAction icon="edit">Edit Data</DisabledAction>
+            </button>
+            <button
+              type="button"
+              onClick={startEditing}
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white hover:bg-primary-hover"
+            >
+              <AppIcon name="edit" size={18} />
+              Edit Data
+            </button>
           </div>
         }
       />
@@ -164,6 +242,52 @@ export default function BiodataAnggota() {
           </div>
         </div>
       </section>
+
+      {formMessage && (
+        <div className="mt-5 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+          {formMessage}
+        </div>
+      )}
+
+      {editing && (
+        <form
+          onSubmit={handleSave}
+          className="mt-6 rounded-2xl border border-primary/20 bg-card p-6 shadow-sm"
+        >
+          <SectionTitle
+            icon="edit"
+            title="Edit Biodata"
+            description="Perbarui data pribadi dan kontakmu. Data organisasi dikelola oleh pembina."
+          />
+
+          <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
+            <EditField name="namaLengkap" label="Nama Lengkap" value={form.namaLengkap} onChange={updateForm} required />
+            <EditField name="nis" label="NIS" value={form.nis} onChange={updateForm} required />
+            <EditField name="namaKelas" label="Kelas" type="select" value={form.namaKelas} onChange={updateForm} options={["X", "XI", "XII"]} required />
+            <EditField name="jenisKelamin" label="Jenis Kelamin" type="select" value={form.jenisKelamin} onChange={updateForm} options={["laki-laki", "perempuan"]} required />
+            <EditField name="nomorTelepon" label="Nomor Telepon" value={form.nomorTelepon} onChange={updateForm} required />
+            <EditField name="alamat" label="Alamat Lengkap" value={form.alamat} onChange={updateForm} required />
+            <EditField name="motivasi" label="Motivasi Bergabung" type="textarea" value={form.motivasi} onChange={updateForm} />
+            <EditField name="pengalamanOrganisasi" label="Pengalaman Organisasi" type="textarea" value={form.pengalamanOrganisasi} onChange={updateForm} />
+          </div>
+
+          {formError && (
+            <p className="mt-5 rounded-xl bg-error-bg px-4 py-3 text-sm font-medium text-error-text">
+              {formError}
+            </p>
+          )}
+
+          <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button type="button" onClick={() => setEditing(false)} disabled={saving} className="min-h-11 rounded-xl border border-border px-5 text-sm font-bold text-text hover:bg-surface disabled:opacity-60">
+              Batal
+            </button>
+            <button type="submit" disabled={saving} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-sm font-bold text-white hover:bg-primary-hover disabled:opacity-60">
+              <AppIcon name="save" size={18} />
+              {saving ? "Menyimpan..." : "Simpan Perubahan"}
+            </button>
+          </div>
+        </form>
+      )}
 
       <section className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-5">
         <div className="space-y-6 xl:col-span-3">
@@ -279,6 +403,28 @@ export default function BiodataAnggota() {
         </div>
       </section>
     </div>
+  );
+}
+
+function EditField({ name, label, type = "text", value, onChange, options, required }) {
+  const className = "min-h-11 w-full rounded-xl border border-border bg-input px-4 text-sm text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary/20";
+
+  return (
+    <label className={type === "textarea" ? "md:col-span-2" : ""}>
+      <span className="mb-2 block text-xs font-bold text-text-muted">
+        {label}{required && <span className="ml-1 text-error-text">*</span>}
+      </span>
+      {type === "textarea" ? (
+        <textarea name={name} value={value} onChange={onChange} rows={3} className={`${className} py-3`} />
+      ) : type === "select" ? (
+        <select name={name} value={value} onChange={onChange} className={className} required={required}>
+          <option value="">Pilih {label.toLowerCase()}</option>
+          {options.map((option) => <option key={option} value={option}>{option}</option>)}
+        </select>
+      ) : (
+        <input name={name} value={value} onChange={onChange} className={className} required={required} />
+      )}
+    </label>
   );
 }
 

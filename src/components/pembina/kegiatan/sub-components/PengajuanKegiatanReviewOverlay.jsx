@@ -75,6 +75,14 @@ function durationLabel(minutes) {
     .join(" ");
 }
 
+function formatBytes(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return "-";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 ** 2).toFixed(1)} MB`;
+}
+
 function labelDivisi(divisi) {
   return divisi?.namaSingkat || divisi?.nama || "Pengurus OSIS";
 }
@@ -197,10 +205,10 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
       (activity?.pesertaRencana ? "Peserta Usulan Anggota" : "Ditentukan Pembina"),
   }));
   const [reviewStatus, setReviewStatus] = useState(
-    activity?.pengajuanRapat?.status || STATUS_PENGAJUAN.MENUNGGU_REVIEW
+    (activity?.pengajuanKegiatan || activity?.pengajuanRapat || activity?.pengajuanProgramKerja)?.status || STATUS_PENGAJUAN.MENUNGGU_REVIEW
   );
   const [reviewNote, setReviewNote] = useState(
-    activity?.pengajuanRapat?.catatanReview || ""
+    (activity?.pengajuanKegiatan || activity?.pengajuanRapat || activity?.pengajuanProgramKerja)?.catatanReview || ""
   );
   const [schedule, setSchedule] = useState(() => buildInitialSchedule(activity));
   const [savingReview, setSavingReview] = useState(false);
@@ -214,6 +222,7 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
   );
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [proposalState, setProposalState] = useState(() => activity?.proposal || null);
 
   const anggota = useCollection(() => colRef("Anggota"), [], { enabled: true });
   const divisi = useCollection(() => colRef("Divisi"), [], { enabled: true });
@@ -234,11 +243,15 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
   );
 
   const isMeeting = activity?.jenisKegiatan === JENIS_KEGIATAN.RAPAT;
+  const isProgramKerja = activity?.jenisKegiatan === JENIS_KEGIATAN.PROGRAM_KERJA;
+  const pengajuanKey = isMeeting ? "pengajuanRapat" : "pengajuanProgramKerja";
+  const pengajuan = activity?.[pengajuanKey] || {};
   const pengaju =
-    activity?.pengaju || memberMap.get(activity?.pengajuanRapat?.idPengaju) || null;
+    activity?.pengaju || memberMap.get(pengajuan.idPengaju) || null;
   const divisiPengaju =
     activity?.divisi ||
     (pengaju?.idDivisi ? divisionMap.get(pengaju.idDivisi) || null : null);
+  const proposal = proposalState;
 
   const selectedParticipantRows = useMemo(
     () =>
@@ -320,10 +333,10 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
 
     try {
       const waktu = serverTimestamp();
-      const current = activity?.pengajuanRapat || {};
+      const current = activity?.[pengajuanKey] || {};
 
       await updateDoc("Kegiatan", activity.id, {
-        pengajuanRapat: {
+        [pengajuanKey]: {
           ...current,
           status: nextStatus,
           catatanReview: reviewNote.trim() || null,
@@ -348,8 +361,35 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
     }
   };
 
+  const requestProposalRevision = async () => {
+    if (!proposal?.id || savingReview || finalizing || finalized) return;
+
+    setSavingReview(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const waktu = serverTimestamp();
+      await updateDoc("Proposal", proposal.id, {
+        status: "perlu_revisi",
+        diperbaruiPada: waktu,
+      });
+      await updateDoc("Kegiatan", activity.id, {
+        statusProposal: "perlu_revisi",
+        diperbaruiPada: waktu,
+      });
+      setProposalState((current) => ({ ...current, status: "perlu_revisi" }));
+      setMessage("Proposal dikembalikan untuk diperbaiki oleh anggota.");
+    } catch (revisionError) {
+      console.error("MINTA REVISI PROPOSAL PENGAJUAN ERROR:", revisionError);
+      setError(revisionError?.message || "Proposal belum berhasil dikembalikan untuk revisi.");
+    } finally {
+      setSavingReview(false);
+    }
+  };
+
   const approveMeeting = async () => {
-    if (!isMeeting || finalizing || finalized) return;
+    if ((!isMeeting && !isProgramKerja) || finalizing || finalized) return;
 
     if (!selectedParticipantIds.size) {
       setError("Tentukan minimal satu peserta sebelum menyetujui rapat.");
@@ -368,12 +408,32 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
     setMessage("");
 
     try {
+      const waktu = serverTimestamp();
+      let proposalForFinalization = proposal;
+      if (proposal?.id && proposal.status !== "disetujui") {
+        await updateDoc("Proposal", proposal.id, {
+          status: "disetujui",
+          diperbaruiPada: waktu,
+        });
+        await updateDoc("Kegiatan", activity.id, {
+          statusProposal: "disetujui",
+          [pengajuanKey]: {
+            ...pengajuan,
+            status: "disetujui",
+          },
+          diperbaruiPada: waktu,
+        });
+        proposalForFinalization = { ...proposal, status: "disetujui" };
+        setProposalState(proposalForFinalization);
+      }
+
       const finalSchedule = buildFinalSchedule(schedule);
       const startAt = combineDateTime(schedule.tanggal, schedule.waktuMulai);
       const endAt = combineDateTime(schedule.tanggal, schedule.waktuSelesai);
 
       const activityForFinalization = {
         ...activity,
+        statusProposal: proposalForFinalization?.status || activity.statusProposal,
         lokasi: schedule.lokasi.trim(),
         waktuMulai: startAt,
         waktuSelesai: endAt,
@@ -388,8 +448,8 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
           sampai: null,
         },
         sumberFinalisasiJadwal: SUMBER_FINALISASI_JADWAL.MANUAL,
-        pengajuanRapat: {
-          ...(activity?.pengajuanRapat || {}),
+        [pengajuanKey]: {
+          ...pengajuan,
           status: STATUS_PENGAJUAN.DISETUJUI,
           catatanReview: reviewNote.trim() || null,
           jadwalFinalPembina: {
@@ -404,6 +464,7 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
       const result = await finalisasiKegiatan({
         db,
         activity: activityForFinalization,
+        proposal: proposalForFinalization,
         participantIds: Array.from(selectedParticipantIds),
         serverTimestamp,
         updateDoc,
@@ -458,8 +519,9 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
                 >
                   {labelStatus(reviewStatus)}
                 </span>
-                <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold text-slate-700">
-                  Tanpa Proposal
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-bold ${proposal?.urlFile ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-700"}`}>
+                  <AppIcon name={proposal?.urlFile ? "description" : "block"} size={13} />
+                  {proposal?.urlFile ? "Proposal tersedia" : "Tanpa Proposal"}
                 </span>
               </div>
 
@@ -467,9 +529,8 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
                 {activity?.namaKegiatan || "Rapat tanpa judul"}
               </h2>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-text-muted">
-                Review agenda, koreksi jadwal, dan tetapkan peserta. Rapat tidak
-                membutuhkan proposal. Finalisasi langsung membuat PelaksanaanKegiatan
-                dan SesiAbsensi.
+                Review agenda, proposal, koreksi jadwal, dan tetapkan peserta.
+                Finalisasi akan membuat PelaksanaanKegiatan dan SesiAbsensi.
               </p>
             </div>
 
@@ -485,7 +546,7 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
         </header>
 
         <div className="overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
-          {!isMeeting && (
+          {!isMeeting && !isProgramKerja && (
             <div className="mb-5 rounded-2xl bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
               Data ini bukan Pengajuan Rapat. Review dibatalkan agar tidak mengubah
               flow Program Kerja yang menggunakan proposal.
@@ -501,16 +562,45 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
                 {activity?.deskripsi || "Belum ada agenda rapat."}
               </p>
 
-              {activity?.pengajuanRapat?.catatanTambahan && (
+              {pengajuan.catatanTambahan && (
                 <div className="mt-5 rounded-2xl border border-border bg-card p-4">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-text-muted">
                     Catatan Pengaju
                   </p>
                   <p className="mt-2 text-sm leading-6 text-text">
-                    {activity.pengajuanRapat.catatanTambahan}
+                    {pengajuan.catatanTambahan}
                   </p>
                 </div>
               )}
+
+              <div className="mt-5 rounded-2xl border border-border bg-card p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                      Proposal dari Anggota
+                    </p>
+                    <p className="mt-1 text-sm font-bold text-text">
+                      {proposal?.namaFile || "Proposal belum tersedia"}
+                    </p>
+                    {proposal?.urlFile && (
+                      <p className="mt-1 text-xs text-text-muted">
+                        {formatBytes(proposal.ukuranFileByte)} · {labelStatus(proposal.status)}
+                      </p>
+                    )}
+                  </div>
+                  {proposal?.urlFile && (
+                    <a
+                      href={proposal.urlFile}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl bg-primary px-3 text-xs font-bold text-white hover:bg-primary-hover"
+                    >
+                      <AppIcon name="open_in_new" size={16} />
+                      Buka File
+                    </a>
+                  )}
+                </div>
+              </div>
             </section>
 
             <div className="space-y-3">
@@ -518,7 +608,7 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
                 icon="person"
                 label="Pengaju"
                 value={pengaju?.namaLengkap || "Anggota OSIS"}
-                helper={activity?.pengajuanRapat?.jabatanPengaju || "Anggota"}
+                helper={pengajuan.jabatanPengaju || "Anggota"}
               />
               <InfoCard
                 icon="apartment"
@@ -528,7 +618,7 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
               <InfoCard
                 icon="schedule"
                 label="Diajukan"
-                value={formatDateTime(activity?.pengajuanRapat?.diajukanPada)}
+                value={formatDateTime(pengajuan.diajukanPada)}
               />
             </div>
           </div>
@@ -769,23 +859,33 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
           ) : (
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <p className="max-w-lg text-xs leading-5 text-text-muted">
-                Rapat tidak membutuhkan proposal. Setujui & Finalisasi akan menetapkan
-                jadwal dan peserta, mengubah status menjadi Akan Datang, lalu membuat
-                sesi absensi.
+                Setujui proposal dan finalisasi kegiatan untuk menetapkan jadwal,
+                peserta, serta membuat sesi absensi.
               </p>
 
               <div className="flex flex-wrap justify-end gap-2">
                 <button
                   type="button"
-                  disabled={savingReview || finalizing || !isMeeting}
+                  disabled={savingReview || finalizing || (!isMeeting && !isProgramKerja)}
                   onClick={() => updateReviewStatus(STATUS_PENGAJUAN.PERLU_REVISI)}
                   className="min-h-11 rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm font-bold text-amber-700 transition hover:bg-amber-100 disabled:opacity-50"
                 >
                   Minta Revisi
                 </button>
+                {isProgramKerja && proposal?.urlFile && (
+                  <button
+                    type="button"
+                    disabled={savingReview || finalizing}
+                    onClick={requestProposalRevision}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-4 text-sm font-bold text-orange-700 transition hover:bg-orange-100 disabled:opacity-50"
+                  >
+                    <AppIcon name="description" size={18} />
+                    Revisi Proposal
+                  </button>
+                )}
                 <button
                   type="button"
-                  disabled={savingReview || finalizing || !isMeeting}
+                  disabled={savingReview || finalizing || (!isMeeting && !isProgramKerja)}
                   onClick={() => updateReviewStatus(STATUS_PENGAJUAN.DITOLAK)}
                   className="min-h-11 rounded-xl border border-red-200 bg-red-50 px-4 text-sm font-bold text-red-700 transition hover:bg-red-100 disabled:opacity-50"
                 >
@@ -794,7 +894,7 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
                 <button
                   type="button"
                   disabled={
-                    !isMeeting ||
+                    (!isMeeting && !isProgramKerja) ||
                     !selectedParticipantIds.size ||
                     !scheduleValid ||
                     savingReview ||
@@ -804,7 +904,7 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
                   className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-sm font-bold text-white transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <AppIcon name="check_circle" size={19} />
-                  {finalizing ? "Memfinalisasi..." : "Setujui & Finalisasi Rapat"}
+                  {finalizing ? "Memfinalisasi..." : "Setujui & Finalisasi Kegiatan"}
                 </button>
               </div>
             </div>

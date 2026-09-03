@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 
 import AppIcon from "@/components/global/AppIcon";
 import { useDb } from "@/context/DbContext";
@@ -71,6 +72,24 @@ function labelStatusJadwal(status) {
       difinalisasi: "Sudah Ditetapkan",
     }[status] || "Belum ditetapkan"
   );
+}
+
+function labelStatusPengajuan(status) {
+  return {
+    menunggu_review: "Menunggu Review",
+    perlu_revisi: "Perlu Revisi",
+    disetujui: "Disetujui",
+    ditolak: "Ditolak",
+  }[status] || "Menunggu Review";
+}
+
+function statusPengajuanClass(status) {
+  return {
+    menunggu_review: "bg-amber-50 text-amber-700",
+    perlu_revisi: "bg-orange-50 text-orange-700",
+    disetujui: "bg-emerald-50 text-emerald-700",
+    ditolak: "bg-red-50 text-red-700",
+  }[status] || "bg-slate-100 text-slate-700";
 }
 
 function formatDuration(activity) {
@@ -155,7 +174,25 @@ export default function KegiatanAnggota() {
         }
       });
 
-    // Draf tidak ditampilkan pada halaman Anggota.
+    const pengajuanSaya = sortKegiatanTerbaru(rowsOf(activities))
+      .filter((activity) => {
+        const pengajuan = activity?.pengajuanKegiatan ||
+          activity?.pengajuanRapat ||
+          activity?.pengajuanProgramKerja;
+        return pengajuan?.sumber === "anggota" && pengajuan?.idPengaju === memberId;
+      })
+      .map((activity) => ({
+        ...activity,
+        divisi: activity.idDivisi ? divisionMap.get(activity.idDivisi) || null : null,
+        proposal: activity.idProposal
+          ? proposalMap.get(activity.idProposal) || proposalByKegiatanMap.get(activity.id) || null
+          : proposalByKegiatanMap.get(activity.id) || null,
+        pengajuan: activity.pengajuanKegiatan ||
+          activity.pengajuanRapat ||
+          activity.pengajuanProgramKerja,
+      }));
+
+    // Draf pengajuan ditampilkan di section progres terpisah.
     // Pengajuan rapat/program kerja tetap tersimpan di collection Kegiatan,
     // tetapi baru muncul di daftar ini setelah menjadi kegiatan resmi.
     const all = sortKegiatanTerbaru(rowsOf(activities))
@@ -240,6 +277,7 @@ export default function KegiatanAnggota() {
     return {
       all,
       filtered,
+      pengajuanSaya,
       upcoming: all.filter(
         (item) => item.status === STATUS_KEGIATAN.AKAN_DATANG
       ).length,
@@ -257,9 +295,6 @@ export default function KegiatanAnggota() {
     memberId,
     member?.idDivisi,
     member?.divisionId,
-    member?.jabatanOrganisasi,
-    member?.organisationPosition,
-    member?.jabatan,
     search,
     statusFilter,
   ]);
@@ -283,19 +318,37 @@ export default function KegiatanAnggota() {
             aturan={ATURAN_AKSES_ORGANISASI.PIMPINAN_ORGANISASI}
           >
             {(akses) => (
-              <button
-                type="button"
-                onClick={() =>
-                  openAjukanRapat({
-                    member: akses.member,
-                    divisi: akses.divisi,
-                  })
-                }
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-white transition hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-              >
-                <AppIcon name="add" size={19} />
-                Ajukan Rapat
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() =>
+                    openAjukanRapat({
+                      member: akses.member,
+                      divisi: akses.divisi,
+                      jenisKegiatan: "program_kerja",
+                    })
+                  }
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-white transition hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                >
+                  <AppIcon name="add" size={19} />
+                  Ajukan Program Kerja
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    openAjukanRapat({
+                      member: akses.member,
+                      divisi: akses.divisi,
+                      jenisKegiatan: "rapat",
+                    })
+                  }
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold text-text transition hover:bg-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                >
+                  <AppIcon name="groups" size={18} />
+                  Ajukan Rapat
+                </button>
+              </div>
             )}
           </AksesOrganisasi>
         }
@@ -330,6 +383,8 @@ export default function KegiatanAnggota() {
           accent="green"
         />
       </section>
+
+      <SubmissionProgressSection rows={data.pengajuanSaya} />
 
       <section className="mt-7">
         <div className="mb-5 flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-sm md:flex-row md:items-center md:justify-between">
@@ -390,6 +445,70 @@ export default function KegiatanAnggota() {
         )}
       </section>
     </div>
+  );
+}
+
+function SubmissionProgressSection({ rows }) {
+  return (
+    <section className="mt-7 rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <AppIcon name="track_changes" size={21} />
+        </span>
+        <div>
+          <h2 className="font-bold text-text">Progres Pengajuan Saya</h2>
+          <p className="mt-1 text-xs leading-5 text-text-muted">
+            Pantau keputusan Pembina atas program kerja atau rapat yang kamu ajukan.
+          </p>
+        </div>
+      </div>
+
+      {rows.length ? (
+        <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {rows.map((activity) => {
+            const proposalStatus = activity.proposal?.status;
+            const status = proposalStatus === "perlu_revisi"
+              ? proposalStatus
+              : activity.pengajuan?.status || "menunggu_review";
+            return (
+              <article key={activity.id} className="rounded-xl border border-border bg-surface p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-primary">
+                      {labelJenisKegiatan(activity.jenisKegiatan)}
+                    </p>
+                    <h3 className="mt-1 truncate text-sm font-bold text-text">
+                      {activity.namaKegiatan || "Pengajuan tanpa judul"}
+                    </h3>
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${statusPengajuanClass(status)}`}>
+                    {labelStatusPengajuan(status)}
+                  </span>
+                </div>
+                {activity.pengajuan?.catatanReview && (
+                  <p className="mt-3 rounded-lg bg-card px-3 py-2 text-xs leading-5 text-text-muted">
+                    Catatan Pembina: {activity.pengajuan.catatanReview}
+                  </p>
+                )}
+                {status === "perlu_revisi" && activity.proposal?.id && (
+                  <Link
+                    href="/anggota/upload-proposal"
+                    className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-xs font-bold text-white hover:bg-primary-hover"
+                  >
+                    <AppIcon name="upload_file" size={16} />
+                    Upload Ulang Proposal
+                  </Link>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="mt-5 rounded-xl bg-surface px-4 py-3 text-sm text-text-muted">
+          Belum ada pengajuan kegiatan.
+        </p>
+      )}
+    </section>
   );
 }
 

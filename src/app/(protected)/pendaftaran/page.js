@@ -61,6 +61,8 @@ const STATUS_KEANGGOTAAN = Object.freeze({
   DITOLAK: "ditolak",
 });
 
+const OPSI_KELAS = ["X", "XI", "XII"];
+
 const DRAF_FORM_PENDAFTARAN = Object.freeze({
   namaLengkap: "",
   nis: "",
@@ -301,6 +303,10 @@ export default function PendaftaranPage() {
 
     if (form.motivasi.trim().length < 30) {
       return "Alasan bergabung minimal 30 karakter.";
+    }
+
+    if (!OPSI_KELAS.includes(form.namaKelas)) {
+      return "Kelas yang dipilih tidak valid.";
     }
 
     if (!sekbidRows.some((item) => item.id === form.idDivisi)) {
@@ -592,11 +598,12 @@ function RegistrationForm({
                 required
               />
 
-              <TextField
+              <SelectField
                 id="namaKelas"
                 label="Kelas"
                 value={form.namaKelas}
-                placeholder="Contoh: XI-1"
+                options={OPSI_KELAS}
+                placeholder="Pilih kelas"
                 onChange={onChange}
                 disabled={submitting || Boolean(konfigurasiError)}
                 required
