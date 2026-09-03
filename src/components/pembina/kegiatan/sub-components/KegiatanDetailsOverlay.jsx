@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { collection, doc, writeBatch } from "firebase/firestore";
 
 import AppIcon from "@/components/global/AppIcon";
 import { useDb } from "@/context/DbContext";
 import { useOverlay } from "@/context/ui/OverlayContext";
 import { useCollection } from "@/hooks/useCollection";
 import { formatDateTime } from "@/components/pembina/_shared/firestoreHelpers";
+import { uploadProposalCloudinary, validasiFileProposal } from "@/lib/uploadProposalCloudinary";
 import {
   JENIS_KEGIATAN,
   STATUS_KEANGGOTAAN,
@@ -240,6 +242,8 @@ export default function KegiatanDetailsModal({ activity, onClose }) {
   const { db, colRef, updateDoc, serverTimestamp } = useDb();
   const [visible, setVisible] = useState(false);
   const [proposal, setProposal] = useState(activity?.proposal || null);
+  const [selectedProposalFile, setSelectedProposalFile] = useState(null);
+  const [uploadingProposal, setUploadingProposal] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [finalized, setFinalized] = useState(
@@ -260,6 +264,7 @@ export default function KegiatanDetailsModal({ activity, onClose }) {
   );
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const proposalInputRef = useRef(null);
   const participantsInitialized = useRef(false);
 
   const anggota = useCollection(() => colRef("Anggota"), [], { enabled: true });
@@ -282,8 +287,11 @@ export default function KegiatanDetailsModal({ activity, onClose }) {
 
   const isMeeting = activity?.jenisKegiatan === JENIS_KEGIATAN.RAPAT;
   const isProgramKerja = !isMeeting;
-  const proposalAvailable = isMeeting || Boolean(proposal?.id);
-  const showFinalizationSections = isMeeting || Boolean(proposal?.id);
+  const activeProposal = proposal || activity?.proposal || null;
+  const activeProposalId = activeProposal?.id || activity?.idProposal || null;
+  const proposalAvailable = isMeeting || Boolean(activeProposalId);
+  const showFinalizationSections = isMeeting || Boolean(activeProposalId);
+  const canManageProposal = isProgramKerja && !finalized;
 
   // -------------------------------------------------------------------------
   // DEFAULT PESERTA
@@ -433,6 +441,135 @@ export default function KegiatanDetailsModal({ activity, onClose }) {
     }));
   };
 
+  const handleProposalFileSelection = (event) => {
+    if (!canManageProposal) {
+      event.target.value = "";
+      return;
+    }
+
+    const file = event.target.files?.[0] || null;
+    if (!file) return;
+
+    const validationError = validasiFileProposal(file);
+    if (validationError) {
+      setError(validationError);
+      event.target.value = "";
+      return;
+    }
+
+    setSelectedProposalFile(file);
+    setError("");
+    setMessage("Proposal siap diunggah. Lanjutkan untuk membuka state review/finalisasi.");
+  };
+
+  const handleUploadProposal = async () => {
+    if (!canManageProposal || !selectedProposalFile || uploadingProposal) return;
+
+    setUploadingProposal(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const waktu = serverTimestamp();
+      const uploaded = await uploadProposalCloudinary(selectedProposalFile);
+      const proposalRef = proposal?.id
+        ? doc(db, "Proposal", proposal.id)
+        : doc(collection(db, "Proposal"));
+
+      const proposalPayload = {
+        idKegiatan: activity.id,
+        idPengunggah:
+          activity?.penanggungJawab?.id ||
+          activity?.idPenanggungJawab ||
+          memberRows[0]?.id ||
+          null,
+        namaKegiatan: activity?.namaKegiatan || "Program Kerja",
+        namaFile: uploaded.namaFile,
+        ukuranFileByte: uploaded.ukuranFileByte,
+        tipeFile: uploaded.tipeFile,
+        urlFile: uploaded.urlFile,
+        publicIdFile: uploaded.publicIdFile,
+        assetIdFile: uploaded.assetIdFile,
+        resourceTypeFile: uploaded.resourceTypeFile,
+        formatFile: uploaded.formatFile,
+        versionCloudinary: uploaded.versionCloudinary,
+        versi: 1,
+        status: STATUS_PROPOSAL.MENUNGGU_REVIEW,
+        diajukanPada: waktu,
+        diperbaruiPada: waktu,
+        jadwalUsulan: activity?.jadwalRencana || null,
+        kepanitiaanUsulan: {
+          mode: "ditentukan_pembina",
+          idPenanggungJawab: activity?.idPenanggungJawab || null,
+          idAnggotaPanitia: [],
+        },
+      };
+
+      const batch = writeBatch(db);
+      batch.set(proposalRef, proposalPayload, { merge: true });
+      batch.update(doc(db, "Kegiatan", activity.id), {
+        idProposal: proposalRef.id,
+        statusProposal: STATUS_PROPOSAL.MENUNGGU_REVIEW,
+        statusTim: STATUS_TIM.MENUNGGU_FINALISASI,
+        diperbaruiPada: waktu,
+      });
+      await batch.commit();
+
+      const nextProposal = {
+        id: proposalRef.id,
+        ...proposalPayload,
+      };
+
+      setProposal(nextProposal);
+      setSelectedProposalFile(null);
+      if (proposalInputRef.current) proposalInputRef.current.value = "";
+      setMessage("Proposal berhasil diunggah. Pilih peserta dan finalisasi jadwal seperti flow review.");
+    } catch (uploadError) {
+      console.error("UPLOAD PROPOSAL DETAIL KEGIATAN ERROR:", uploadError);
+      setError(
+        uploadError?.message ||
+          "Proposal belum berhasil diunggah. Periksa file dan koneksi Firestore."
+      );
+    } finally {
+      setUploadingProposal(false);
+    }
+  };
+
+  /**
+   * Menghapus kegiatan secara permanen beserta seluruh data turunannya.
+   * Root Kegiatan dihapus paling akhir agar cleanup dapat diulang bila gagal.
+   */
+  const handleDeleteActivity = async () => {
+    if (!activity?.id || deleting || finalizing || rejecting) return;
+
+    setDeleting(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const result = await hapusKegiatanBersih({
+        db,
+        activity: {
+          ...activity,
+          idProposal: proposal?.id || activity?.idProposal || null,
+        },
+        serverTimestamp,
+      });
+
+      console.info("HAPUS KEGIATAN BERSIH BERHASIL:", result);
+      setDeleteConfirmOpen(false);
+      setVisible(false);
+      window.setTimeout(() => onClose?.(), 220);
+    } catch (deleteError) {
+      console.error("HAPUS KEGIATAN BERSIH ERROR:", deleteError);
+      setError(
+        deleteError?.message ||
+          "Kegiatan belum berhasil dihapus. Periksa izin Firestore lalu coba lagi."
+      );
+    } finally {
+      setDeleting(false);
+    }
+  };
   const handleRejectProposal = async () => {
     if (!proposal?.id || finalized || rejecting) return;
     setRejecting(true);
@@ -510,6 +647,28 @@ export default function KegiatanDetailsModal({ activity, onClose }) {
     setMessage("");
 
     try {
+      const waktu = serverTimestamp();
+      const effectiveProposal = activeProposal || proposal || null;
+      const proposalStatus = effectiveProposal?.status || activity?.statusProposal;
+      const shouldApproveProposal =
+        isProgramKerja &&
+        effectiveProposal?.id &&
+        proposalStatus !== STATUS_PROPOSAL.DISETUJUI;
+
+      if (shouldApproveProposal) {
+        await updateDoc("Proposal", effectiveProposal.id, {
+          status: STATUS_PROPOSAL.DISETUJUI,
+          disetujuiPada: waktu,
+          diperbaruiPada: waktu,
+        });
+
+        await updateDoc("Kegiatan", activity.id, {
+          idProposal: effectiveProposal.id,
+          statusProposal: STATUS_PROPOSAL.DISETUJUI,
+          diperbaruiPada: waktu,
+        });
+      }
+
       const finalSchedule = buildFinalSchedule(activity, scheduleDraft);
       const activityForFinalization = {
         ...activity,
@@ -517,22 +676,27 @@ export default function KegiatanDetailsModal({ activity, onClose }) {
         pengulanganFinal:
           activity?.pengulanganFinal || activity?.pengulanganRencana || null,
         sumberFinalisasiJadwal: SUMBER_FINALISASI_JADWAL.MANUAL,
+        statusProposal:
+          shouldApproveProposal ? STATUS_PROPOSAL.DISETUJUI : activity?.statusProposal,
       };
 
       const result = await finalisasiKegiatan({
         db,
         activity: activityForFinalization,
-        proposal,
+        proposal: shouldApproveProposal
+          ? { ...effectiveProposal, status: STATUS_PROPOSAL.DISETUJUI }
+          : effectiveProposal,
         participantIds: Array.from(selectedParticipantIds),
         serverTimestamp,
         updateDoc,
       });
 
       setFinalized(true);
-      if (proposal) {
+      if (effectiveProposal) {
         setProposal((current) => ({
-          ...current,
+          ...(current || effectiveProposal),
           status: STATUS_PROPOSAL.DISETUJUI,
+          disetujuiPada: waktu,
         }));
       }
       setMessage(
@@ -733,25 +897,91 @@ export default function KegiatanDetailsModal({ activity, onClose }) {
                         Versi {proposal.versi || 1} · {formatBytes(proposal.ukuranFileByte)}
                       </p>
                     </div>
-                    {proposal.urlFile && (
-                      <a
-                        href={proposal.urlFile}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-bold text-text hover:border-primary/40 hover:text-primary"
-                      >
-                        <AppIcon name="open_in_new" size={17} />
-                        Buka Proposal
-                      </a>
-                    )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {proposal.urlFile && (
+                        <a
+                          href={proposal.urlFile}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-bold text-text hover:border-primary/40 hover:text-primary"
+                        >
+                          <AppIcon name="open_in_new" size={17} />
+                          Buka Proposal
+                        </a>
+                      )}
+                      {canManageProposal && (
+                        <>
+                          <input
+                            ref={proposalInputRef}
+                            type="file"
+                            accept=".pdf,.doc,.docx"
+                            onChange={handleProposalFileSelection}
+                            className="hidden"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => proposalInputRef.current?.click()}
+                            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-white hover:bg-primary-hover"
+                          >
+                            <AppIcon name={selectedProposalFile ? "edit" : "upload_file"} size={17} />
+                            {selectedProposalFile ? "Ganti Proposal" : "Upload Proposal"}
+                          </button>
+                          {selectedProposalFile && (
+                            <button
+                              type="button"
+                              onClick={handleUploadProposal}
+                              disabled={uploadingProposal}
+                              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/5 px-4 text-sm font-bold text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              <AppIcon name="check" size={17} />
+                              {uploadingProposal ? "Mengunggah..." : "Simpan Proposal"}
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               ) : (
                 <div className="mt-5 rounded-2xl border border-dashed border-red-200 bg-red-50 p-4">
-                  <p className="text-sm font-bold text-red-700">Belum ada proposal</p>
-                  <p className="mt-1 text-xs text-red-600">
-                    Peserta dan Finalisasi Jadwal baru tersedia setelah Proposal masuk.
-                  </p>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm font-bold text-red-700">Belum ada proposal</p>
+                      <p className="mt-1 text-xs text-red-600">
+                        Peserta dan Finalisasi Jadwal baru tersedia setelah Proposal masuk.
+                      </p>
+                    </div>
+                    {canManageProposal && (
+                      <>
+                        <input
+                          ref={proposalInputRef}
+                          type="file"
+                          accept=".pdf,.doc,.docx"
+                          onChange={handleProposalFileSelection}
+                          className="hidden"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => proposalInputRef.current?.click()}
+                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-white hover:bg-primary-hover"
+                        >
+                          <AppIcon name="upload_file" size={17} />
+                          Upload Proposal
+                        </button>
+                        {selectedProposalFile && (
+                          <button
+                            type="button"
+                            onClick={handleUploadProposal}
+                            disabled={uploadingProposal}
+                            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/5 px-4 text-sm font-bold text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <AppIcon name="check" size={17} />
+                            {uploadingProposal ? "Mengunggah..." : "Simpan Proposal"}
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
             </section>

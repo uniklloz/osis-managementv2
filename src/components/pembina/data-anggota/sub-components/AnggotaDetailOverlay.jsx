@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { doc, writeBatch } from "firebase/firestore";
+import { collection, doc, getDocs, writeBatch } from "firebase/firestore";
 
 import AppIcon from "@/components/global/AppIcon";
 import {
@@ -99,6 +99,7 @@ export default function AnggotaDetailModal({ member, onClose }) {
   const { openOverlay, closeOverlay, closeAllOverlays } = useOverlay();
 
   const [savingDecision, setSavingDecision] = useState(null);
+  const [deletingMember, setDeletingMember] = useState(false);
   const [decisionError, setDecisionError] = useState("");
   const [organisasiAktif, setOrganisasiAktif] = useState(() => ({
     idDivisi: member?.idDivisi || "",
@@ -212,6 +213,85 @@ export default function AnggotaDetailModal({ member, onClose }) {
       );
     } finally {
       setSavingDecision(null);
+    }
+  };
+
+  const handleDeleteMember = async () => {
+    if (!member?.id || deletingMember) return;
+
+    const confirmed = window.confirm(
+      `Hapus seluruh data anggota “${member?.namaLengkap || "anggota ini"}”? Tindakan ini akan menghapus data anggota, akun terkait, ringkasan absensi, dan referensi di kegiatan.`
+    );
+
+    if (!confirmed) return;
+
+    setDeletingMember(true);
+    setDecisionError("");
+
+    try {
+      const batch = writeBatch(db);
+
+      if (member?.idPengguna) {
+        batch.delete(doc(db, "Users", member.idPengguna));
+      }
+
+      batch.delete(doc(db, KOLEKSI.ANGGOTA, member.id));
+      batch.delete(doc(db, KOLEKSI.RINGKASAN_ABSENSI, member.id));
+
+      const kegiatanSnap = await getDocs(collection(db, "Kegiatan"));
+
+      kegiatanSnap.forEach((activityDoc) => {
+        const data = activityDoc.data() || {};
+        const next = {};
+
+        if (data.idPenanggungJawab === member.id) {
+          next.idPenanggungJawab = null;
+        }
+
+        if (Array.isArray(data.idAnggotaPanitia)) {
+          const nextPanitia = data.idAnggotaPanitia.filter((id) => id !== member.id);
+          if (nextPanitia.length !== data.idAnggotaPanitia.length) {
+            next.idAnggotaPanitia = nextPanitia;
+          }
+        }
+
+        const cleanParticipantList = (list) =>
+          Array.isArray(list) ? list.filter((id) => id !== member.id) : list;
+
+        if (Array.isArray(data?.pesertaFinal?.idAnggota)) {
+          const cleaned = cleanParticipantList(data.pesertaFinal.idAnggota);
+          if (cleaned.length !== data.pesertaFinal.idAnggota.length) {
+            next.pesertaFinal = {
+              ...(data.pesertaFinal || {}),
+              idAnggota: cleaned,
+            };
+          }
+        }
+
+        if (Array.isArray(data?.usulanPeserta?.idAnggota)) {
+          const cleaned = cleanParticipantList(data.usulanPeserta.idAnggota);
+          if (cleaned.length !== data.usulanPeserta.idAnggota.length) {
+            next.usulanPeserta = {
+              ...(data.usulanPeserta || {}),
+              idAnggota: cleaned,
+            };
+          }
+        }
+
+        if (Object.keys(next).length) {
+          batch.update(doc(db, "Kegiatan", activityDoc.id), next);
+        }
+      });
+
+      await batch.commit();
+      closeAllOverlays();
+    } catch (error) {
+      console.error("DELETE MEMBER CLEANUP ERROR:", error);
+      setDecisionError(
+        error?.message || "Data anggota belum berhasil dihapus. Periksa koneksi dan izin Firestore."
+      );
+    } finally {
+      setDeletingMember(false);
     }
   };
 
@@ -398,6 +478,16 @@ export default function AnggotaDetailModal({ member, onClose }) {
                 <AppIcon name="chevron_right" size={21} />
               </button>
             )}
+
+            <button
+              type="button"
+              disabled={Boolean(deletingMember) || Boolean(savingDecision)}
+              onClick={handleDeleteMember}
+              className="mt-3 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-5 text-sm font-bold text-red-700 transition hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <AppIcon name="delete_forever" size={20} />
+              {deletingMember ? "Menghapus data anggota..." : "Hapus Data Anggota"}
+            </button>
           </section>
         )}
       </div>

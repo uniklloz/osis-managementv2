@@ -152,6 +152,20 @@ export default function KegiatanAnggota() {
   const error =
     memberError || activities.error || divisions.error || proposals.error;
 
+  function sortByNearestStart(rows) {
+    const now = Date.now();
+    return [...rows].sort((a, b) => {
+      const aDone = a?.status === STATUS_KEGIATAN.SELESAI ? 1 : 0;
+      const bDone = b?.status === STATUS_KEGIATAN.SELESAI ? 1 : 0;
+
+      if (aDone !== bDone) return aDone - bDone;
+
+      const aStamp = a?.waktuMulai ? new Date(a.waktuMulai).getTime() : Number.MAX_SAFE_INTEGER;
+      const bStamp = b?.waktuMulai ? new Date(b.waktuMulai).getTime() : Number.MAX_SAFE_INTEGER;
+      return Math.abs(aStamp - now) - Math.abs(bStamp - now);
+    });
+  }
+
   const data = useMemo(() => {
     const divisionMap = new Map(
       rowsOf(divisions).map((item) => [item.id, item])
@@ -386,7 +400,7 @@ export default function KegiatanAnggota() {
 
       <SubmissionProgressSection rows={data.pengajuanSaya} />
 
-      <section className="mt-7">
+      <section className="mt-7 space-y-8">
         <div className="mb-5 flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-sm md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="font-bold text-text">Daftar Kegiatan</h2>
@@ -426,23 +440,25 @@ export default function KegiatanAnggota() {
           </div>
         </div>
 
-        {data.filtered.length === 0 ? (
-          <EmptyState
-            icon="event_available"
-            title="Kegiatan tidak ditemukan"
-            description="Coba ubah kata pencarian atau filter status."
-          />
-        ) : (
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-            {data.filtered.map((activity) => (
-              <ActivityCard
-                key={activity.id}
-                activity={activity}
-                onDetail={() => openKegiatanDetails(activity)}
-              />
-            ))}
-          </div>
-        )}
+        <KegiatanListSection
+          title="Daftar Program Kerja"
+          icon="campaign"
+          rows={sortByNearestStart(
+            data.filtered.filter((item) => item.jenisKegiatan !== "rapat")
+          )}
+          onDetail={openKegiatanDetails}
+          tone="primary"
+        />
+
+        <KegiatanListSection
+          title="Daftar Rapat"
+          icon="groups"
+          rows={sortByNearestStart(
+            data.filtered.filter((item) => item.jenisKegiatan === "rapat")
+          )}
+          onDetail={openKegiatanDetails}
+          tone="blue"
+        />
       </section>
     </div>
   );
@@ -508,6 +524,51 @@ function SubmissionProgressSection({ rows }) {
           Belum ada pengajuan kegiatan.
         </p>
       )}
+    </section>
+  );
+}
+
+function KegiatanListSection({ title, icon, rows, onDetail, tone = "primary" }) {
+  const toneClass =
+    tone === "blue"
+      ? "bg-blue-50 text-blue-700"
+      : "bg-primary/10 text-primary";
+
+  if (!rows.length) {
+    return null;
+  }
+
+  return (
+    <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+      <div className="flex items-center justify-between gap-4 border-b border-border bg-surface px-5 py-4 sm:px-6">
+        <div className="flex items-center gap-3">
+          <span className={`flex h-11 w-11 items-center justify-center rounded-2xl ${toneClass}`}>
+            <AppIcon name={icon} size={22} />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-muted">
+              Kegiatan
+            </p>
+            <h3 className="font-bold text-text">{title}</h3>
+          </div>
+        </div>
+        <span className="rounded-full bg-surface px-3 py-1 text-[10px] font-bold text-text-muted ring-1 ring-inset ring-border">
+          {rows.length} item
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 p-5 lg:grid-cols-2">
+        {rows.map((activity) => (
+          <ActivityCard
+            key={activity.id}
+            activity={activity}
+            onDetail={() => onDetail?.(activity)}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
     </section>
   );
 }

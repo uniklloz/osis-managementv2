@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import AppIcon from "@/components/global/AppIcon";
 import { collection, doc, writeBatch } from "firebase/firestore";
 import { useDb } from "@/context/DbContext";
 import { useOverlay } from "@/context/ui/OverlayContext";
 import { buatIdReferensiKegiatan } from "@/lib/codefication";
+import { validasiFileProposal, uploadProposalCloudinary } from "@/lib/uploadProposalCloudinary";
+import { finalisasiKegiatan } from "./finalisasiKegiatan";
 import {
   FREKUENSI_PENGULANGAN,
   JENIS_KEGIATAN,
@@ -485,8 +487,6 @@ export default function SeleksiKegiatanModal({
   const [step, setStep] = useState("select");
   const [activityType, setActivityType] = useState(JENIS_KEGIATAN.PROGRAM_KERJA);
   const [form, setForm] = useState(() => buatDrafFormSeleksiKegiatan());
-  const [proposalPanelOpen, setProposalPanelOpen] = useState(false);
-  const [proposalSearch, setProposalSearch] = useState("");
   const [committeeSearch, setCommitteeSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -512,30 +512,6 @@ export default function SeleksiKegiatanModal({
         )
       ),
     [members]
-  );
-
-  const proposalOptions = useMemo(() => {
-    const keyword = proposalSearch.trim().toLowerCase();
-
-    return [...proposals]
-      .filter((proposal) => {
-        if (!keyword) return true;
-
-        const uploader = resolveUploader(proposal, memberMap);
-        return Boolean(
-          proposalTitle(proposal).toLowerCase().includes(keyword) ||
-            String(proposal?.namaFile || "").toLowerCase().includes(keyword) ||
-            String(uploader.name).toLowerCase().includes(keyword) ||
-            String(uploader.position).toLowerCase().includes(keyword) ||
-            String(uploader.id).toLowerCase().includes(keyword)
-        );
-      })
-      .sort((a, b) => proposalTitle(a).localeCompare(proposalTitle(b), "id"));
-  }, [proposals, proposalSearch, memberMap]);
-
-  const selectedProposal = useMemo(
-    () => proposals.find((proposal) => proposal.id === form.proposalId) || null,
-    [proposals, form.proposalId]
   );
 
   const filteredCommitteeMembers = useMemo(() => {
@@ -578,8 +554,6 @@ export default function SeleksiKegiatanModal({
   );
   const firstSession = baseSessions[0] || null;
   const lastSession = baseSessions[baseSessions.length - 1] || null;
-  const hasSelectedProposal = Boolean(selectedProposal);
-
   const occurrencePreview = useMemo(
     () => buildOccurrencePreview(form, baseSessions, MAX_SERIES_OCCURRENCES),
     [
@@ -592,108 +566,9 @@ export default function SeleksiKegiatanModal({
     ]
   );
 
-  const proposalSchedule = useMemo(
-    () => extractProposalSchedule(selectedProposal),
-    [selectedProposal]
-  );
-
-  const proposedCommittee = useMemo(
-    () => extractProposedCommittee(selectedProposal),
-    [selectedProposal]
-  );
-
-  const proposalBaseSessions = useMemo(
-    () => (proposalSchedule ? buildBaseSessions(proposalSchedule) : []),
-    [proposalSchedule]
-  );
-
-  const finalScheduleForm = useMemo(
-    () => buildFinalScheduleForm(form),
-    [
-      form.finalScheduleMode,
-      form.finalStartDate,
-      form.finalEndDate,
-      form.finalDailySchedules,
-      form.finalRecurrenceInterval,
-      form.finalRecurrenceUntil,
-    ]
-  );
-
-  const finalBaseSessions = useMemo(
-    () => buildBaseSessions(finalScheduleForm),
-    [
-      finalScheduleForm.startDate,
-      finalScheduleForm.endDate,
-      finalScheduleForm.dailySchedules,
-    ]
-  );
-
-  const finalDayCount = finalBaseSessions.length;
-  const finalValidSessionCount = finalBaseSessions.filter(
-    (session) => session.valid
-  ).length;
-  const finalTotalScheduledMinutes = finalBaseSessions.reduce(
-    (total, session) => total + (session.valid ? session.durationMinutes : 0),
-    0
-  );
-  const finalStartDateValue = parseDateOnly(form.finalStartDate);
-  const finalEndDateValue = parseDateOnly(form.finalEndDate);
-  const hasValidFinalDateRange = Boolean(
-    finalStartDateValue &&
-      finalEndDateValue &&
-      finalEndDateValue >= finalStartDateValue
-  );
-  const hasValidFinalAttendanceSchedule = Boolean(
-    finalDayCount > 0 && finalValidSessionCount === finalDayCount
-  );
-
-  const finalOccurrencePreview = useMemo(
-    () =>
-      hasSelectedProposal
-        ? buildOccurrencePreview(
-            finalScheduleForm,
-            finalBaseSessions,
-            MAX_SERIES_OCCURRENCES
-          )
-        : [],
-    [
-      hasSelectedProposal,
-      finalScheduleForm.scheduleMode,
-      finalScheduleForm.recurrenceInterval,
-      finalScheduleForm.recurrenceUntil,
-      finalScheduleForm.startDate,
-      finalScheduleForm.endDate,
-      finalScheduleForm.dailySchedules,
-      finalBaseSessions,
-    ]
-  );
-
-  const plannedScheduleForCompare = useMemo(
-    () => ({
-      scheduleMode: form.scheduleMode,
-      startDate: form.startDate,
-      endDate: form.endDate,
-      recurrenceInterval: form.recurrenceInterval,
-      recurrenceUntil: form.recurrenceUntil,
-    }),
-    [
-      form.scheduleMode,
-      form.startDate,
-      form.endDate,
-      form.recurrenceInterval,
-      form.recurrenceUntil,
-    ]
-  );
-
-  const proposalScheduleIsDifferent = Boolean(
-    proposalSchedule && scheduleDiffers(plannedScheduleForCompare, proposalSchedule)
-  );
-
   const chooseCategory = (value) => {
     setActivityType(value);
     setForm(buatDrafFormSeleksiKegiatan());
-    setProposalPanelOpen(false);
-    setProposalSearch("");
     setCommitteeSearch("");
     setError("");
     setStep("form");
@@ -714,8 +589,6 @@ export default function SeleksiKegiatanModal({
       recurrenceInterval: current.recurrenceInterval,
       recurrenceUntil: current.recurrenceUntil,
     }));
-    setProposalPanelOpen(false);
-    setProposalSearch("");
     setCommitteeSearch("");
     setError("");
   };
@@ -854,82 +727,6 @@ export default function SeleksiKegiatanModal({
     if (error) setError("");
   };
 
-  const applyScheduleToFinal = (source) => {
-    setForm((current) => {
-      const chosen =
-        source === "proposal" && proposalSchedule
-          ? proposalSchedule
-          : {
-              scheduleMode: current.scheduleMode,
-              startDate: current.startDate,
-              endDate: current.endDate,
-              dailySchedules: current.dailySchedules,
-              recurrenceInterval: current.recurrenceInterval,
-              recurrenceUntil: current.recurrenceUntil,
-            };
-
-      return {
-        ...current,
-        finalScheduleSource: source === "proposal" && proposalSchedule ? "proposal" : "planned",
-        finalScheduleMode: chosen.scheduleMode || "once",
-        finalStartDate: chosen.startDate || "",
-        finalEndDate: chosen.endDate || chosen.startDate || "",
-        finalDailySchedules: { ...(chosen.dailySchedules || {}) },
-        finalRecurrenceInterval: String(chosen.recurrenceInterval || "1"),
-        finalRecurrenceUntil:
-          chosen.scheduleMode === "recurring"
-            ? chosen.recurrenceUntil || periodEndDate || chosen.endDate || ""
-            : "",
-      };
-    });
-    if (error) setError("");
-  };
-
-  const applyProposedCommittee = () => {
-    setForm((current) => ({
-      ...current,
-      organiserMemberId: proposedCommittee.organiserMemberId || "",
-      committeeMemberIds: [...proposedCommittee.memberIds],
-    }));
-    if (error) setError("");
-  };
-
-  const selectProposal = (proposal) => {
-    if (proposal.idKegiatan) return;
-
-    setForm((current) => ({
-      ...current,
-      proposalId: proposal.id,
-      finalScheduleSource: "planned",
-      finalScheduleMode: current.scheduleMode,
-      finalStartDate: current.startDate,
-      finalEndDate: current.endDate,
-      finalDailySchedules: { ...current.dailySchedules },
-      finalRecurrenceInterval: current.recurrenceInterval,
-      finalRecurrenceUntil: current.recurrenceUntil,
-      organiserMemberId: "",
-      committeeMemberIds: [],
-    }));
-    setError("");
-    setProposalPanelOpen(false);
-  };
-
-  const clearProposal = () => {
-    setForm((current) => ({
-      ...current,
-      proposalId: "",
-      finalScheduleSource: "planned",
-      finalScheduleMode: "once",
-      finalStartDate: "",
-      finalEndDate: "",
-      finalDailySchedules: {},
-      finalRecurrenceInterval: "1",
-      finalRecurrenceUntil: "",
-      organiserMemberId: "",
-      committeeMemberIds: [],
-    }));
-  };
-
   const submitForm = async (event) => {
     event.preventDefault();
 
@@ -966,16 +763,6 @@ export default function SeleksiKegiatanModal({
       }
     }
 
-    if (form.proposalId && !selectedProposal) {
-      setError("Proposal yang dipilih tidak ditemukan. Silakan pilih ulang.");
-      return;
-    }
-
-    if (selectedProposal?.idKegiatan) {
-      setError("Proposal tersebut sudah terhubung dengan kegiatan lain.");
-      return;
-    }
-
     const plannedOccurrences = buildOccurrences(
       form,
       baseSessions,
@@ -987,60 +774,11 @@ export default function SeleksiKegiatanModal({
       return;
     }
 
-    // Program Kerja tidak lagi difinalisasi dari modal pembuatan.
-    // Walaupun Proposal sudah dipilih oleh Pembina, kegiatan tetap disimpan
-    // sebagai TERENCANA. Finalisasi peserta, jadwal, dan pembuatan sesi hanya
-    // dilakukan dari Detail Kegiatan setelah Proposal tersedia.
-    const shouldFinalizeWorkProgram = false;
-
-    if (shouldFinalizeWorkProgram) {
-      if (!form.finalStartDate || !form.finalEndDate || !hasValidFinalDateRange) {
-        setError("Jadwal final harus memiliki tanggal mulai dan selesai yang valid.");
-        return;
-      }
-
-      if (!hasValidFinalAttendanceSchedule) {
-        setError("Setiap jadwal final harian harus memiliki jam mulai dan selesai yang valid.");
-        return;
-      }
-
-      if (form.finalScheduleMode === "recurring") {
-        if (!form.finalRecurrenceUntil) {
-          setError("Tentukan sampai kapan jadwal final berulang.");
-          return;
-        }
-        if (form.finalRecurrenceUntil < form.finalEndDate) {
-          setError("Batas pengulangan final harus mencakup seluruh pelaksanaan pertama.");
-          return;
-        }
-        if (periodEndDate && form.finalRecurrenceUntil > periodEndDate) {
-          setError("Jadwal final tidak boleh melewati akhir periode aktif.");
-          return;
-        }
-      }
-    }
-
-    const shouldGenerateChildren =
-      activityType === JENIS_KEGIATAN.RAPAT || shouldFinalizeWorkProgram;
-
-    const effectiveScheduleForm =
-      shouldFinalizeWorkProgram ? finalScheduleForm : form;
-
-    const effectiveBaseSessions =
-      shouldFinalizeWorkProgram ? finalBaseSessions : baseSessions;
-
-    const occurrences = shouldGenerateChildren
-      ? buildOccurrences(
-          effectiveScheduleForm,
-          effectiveBaseSessions,
-          MAX_SERIES_OCCURRENCES
-        )
-      : [];
-
-    if (shouldGenerateChildren && !occurrences.length) {
-      setError("Tidak ada pelaksanaan final yang dapat dibuat dari jadwal tersebut.");
-      return;
-    }
+    // Program Kerja selalu disimpan dalam status Terencana dan menunggu
+    // finalisasi dari detail kegiatan, bukan dari modal pembuatan.
+    const effectiveScheduleForm = form;
+    const effectiveBaseSessions = baseSessions;
+    const occurrences = [];
 
     const plannedTotalSessionCount = plannedOccurrences.reduce(
       (total, occurrence) => total + occurrence.sessions.length,
@@ -1131,21 +869,6 @@ export default function SeleksiKegiatanModal({
         ? null
         : makeRecurrencePayload(form);
 
-    const snapshotJadwalProposal =
-      activityType === JENIS_KEGIATAN.PROGRAM_KERJA && proposalSchedule
-        ? {
-            jadwal: makeSchedulePayload(proposalSchedule, proposalBaseSessions),
-            pengulangan: makeRecurrencePayload(proposalSchedule),
-          }
-        : null;
-
-    const sumberFinalisasiJadwal =
-      form.finalScheduleSource === "proposal"
-        ? SUMBER_FINALISASI_JADWAL.PROPOSAL
-        : form.finalScheduleSource === "manual"
-          ? SUMBER_FINALISASI_JADWAL.MANUAL
-          : SUMBER_FINALISASI_JADWAL.RENCANA;
-
     setSaving(true);
     setError("");
 
@@ -1176,9 +899,7 @@ export default function SeleksiKegiatanModal({
         jumlahHariKalender: effectiveBaseSessions.length,
         jumlahPelaksanaan: occurrences.length,
         jumlahSesiAbsensi: totalSessionCount,
-        durasiMenit: shouldFinalizeWorkProgram
-          ? finalTotalScheduledMinutes
-          : totalScheduledMinutes,
+        durasiMenit: totalScheduledMinutes,
 
         jadwalRencana:
           activityType === JENIS_KEGIATAN.PROGRAM_KERJA
@@ -1199,18 +920,9 @@ export default function SeleksiKegiatanModal({
 
         jadwalFinal: resolvedFinalSchedulePayload,
         pengulanganFinal: resolvedFinalRecurrencePayload,
-        statusJadwal:
-          activityType === JENIS_KEGIATAN.PROGRAM_KERJA
-            ? STATUS_JADWAL.DIRENCANAKAN
-            : STATUS_JADWAL.DIFINALISASI,
-        sumberFinalisasiJadwal:
-          activityType === JENIS_KEGIATAN.RAPAT
-            ? SUMBER_FINALISASI_JADWAL.LANGSUNG
-            : null,
-        difinalisasiPada:
-          activityType === JENIS_KEGIATAN.RAPAT
-            ? serverTimestamp()
-            : null,
+        statusJadwal: STATUS_JADWAL.DIRENCANAKAN,
+        sumberFinalisasiJadwal: null,
+        difinalisasiPada: null,
 
         idDivisi: form.divisionId || null,
         idPenanggungJawab: form.organiserMemberId || null,
@@ -1219,24 +931,12 @@ export default function SeleksiKegiatanModal({
             ? [...form.committeeMemberIds]
             : [],
 
-        idProposal:
-          activityType === JENIS_KEGIATAN.PROGRAM_KERJA
-            ? form.proposalId || null
-            : null,
-        statusProposal:
-          activityType === JENIS_KEGIATAN.PROGRAM_KERJA
-            ? selectedProposal?.status ||
-              (hasSelectedProposal
-                ? STATUS_PROPOSAL.DIAJUKAN
-                : STATUS_PROPOSAL.BELUM_DIAJUKAN)
-            : null,
-        snapshotJadwalProposal,
+        idProposal: null,
+        statusProposal: null,
 
         statusTim:
           activityType === JENIS_KEGIATAN.PROGRAM_KERJA
-            ? hasSelectedProposal
-              ? STATUS_TIM.MENUNGGU_FINALISASI
-              : STATUS_TIM.BELUM_DIAJUKAN
+            ? STATUS_TIM.BELUM_DIAJUKAN
             : null,
 
         status:
@@ -1256,7 +956,7 @@ export default function SeleksiKegiatanModal({
 
       const childWrites = [];
 
-      if (shouldGenerateChildren) {
+      if (false) {
         for (const occurrence of occurrences) {
           const first = occurrence.sessions[0];
           const last = occurrence.sessions[occurrence.sessions.length - 1];
@@ -1310,26 +1010,9 @@ export default function SeleksiKegiatanModal({
         committedChildRefs = await commitSetChunks(db, childWrites);
       }
 
-      if (activityType === JENIS_KEGIATAN.PROGRAM_KERJA && selectedProposal) {
-        await updateDoc(
-          KOLEKSI.PROPOSAL,
-          selectedProposal.id,
-          buatPayloadTautanProposal(createdActivity.id, serverTimestamp())
-        );
-        proposalLinked = true;
-      }
-
       onCreated?.(activityType);
     } catch (submitError) {
       console.error("CREATE ACTIVITY ERROR:", submitError);
-
-      if (proposalLinked && selectedProposal) {
-        await updateDoc(
-          KOLEKSI.PROPOSAL,
-          selectedProposal.id,
-          buatPayloadTautanProposal(null, serverTimestamp())
-        ).catch(() => {});
-      }
 
       if (committedChildRefs.length) {
         await deleteRefsInChunks(db, [...committedChildRefs].reverse());
@@ -1366,9 +1049,7 @@ export default function SeleksiKegiatanModal({
             {step === "select"
               ? "Pilih Kategori Kegiatan"
               : activityType === JENIS_KEGIATAN.PROGRAM_KERJA
-                ? proposalPanelOpen
-                  ? "Pilih Proposal"
-                  : "Tambah Program Kerja"
+                ? "Tambah Program Kerja"
                 : "Tambah Meeting"}
           </h2>
 
@@ -1376,9 +1057,7 @@ export default function SeleksiKegiatanModal({
             {step === "select"
               ? "Tentukan jenis kegiatan yang ingin dibuat."
               : activityType === JENIS_KEGIATAN.PROGRAM_KERJA
-                ? proposalPanelOpen
-                  ? "Pilih proposal yang sudah diunggah anggota dan belum terhubung ke kegiatan lain."
-                  : "Buat rencana kegiatan dan hubungkan proposal jika sudah tersedia."
+                ? "Buat rencana program kerja dan simpan sebagai status Terencana."
                 : "Lengkapi informasi agenda meeting."}
           </p>
         </div>
@@ -1422,34 +1101,8 @@ export default function SeleksiKegiatanModal({
         ) : (
           <form onSubmit={submitForm} className="h-full min-h-0">
             <div className="h-full min-h-0 overflow-hidden">
-              <div
-                className={`flex h-full min-h-0 w-[200%] items-stretch transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-                  proposalPanelOpen ? "-translate-x-1/2" : "translate-x-0"
-                }`}
-              >
-                <div
-                  className={`h-full min-h-0 w-1/2 shrink-0 overflow-y-auto overscroll-contain p-5 transition-opacity duration-300 [scrollbar-gutter:stable] sm:p-6 ${
-                    proposalPanelOpen ? "pointer-events-none opacity-50" : "opacity-100"
-                  }`}
-                  aria-hidden={proposalPanelOpen}
-                >
-                  <div className="mb-6">
-                    <div className="inline-flex w-full rounded-2xl bg-input p-1 sm:w-auto">
-                      <TypeTab
-                        active={activityType === JENIS_KEGIATAN.PROGRAM_KERJA}
-                        icon="campaign"
-                        label="Program Kerja"
-                        onClick={() => changeType("work_program")}
-                      />
-                      <TypeTab
-                        active={activityType === JENIS_KEGIATAN.RAPAT}
-                        icon="groups"
-                        label="Meeting"
-                        onClick={() => changeType("meeting")}
-                      />
-                    </div>
-                  </div>
-
+              <div className="flex h-full min-h-0 items-stretch">
+                <div className="h-full min-h-0 w-full overflow-y-auto overscroll-contain p-5 [scrollbar-gutter:stable] sm:p-6">
                   <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                     <FormField className="sm:col-span-2" label="Nama kegiatan" required>
                       <input
@@ -1781,422 +1434,7 @@ export default function SeleksiKegiatanModal({
                     </div>
                   </ProgressiveSection>
 
-                          {activityType === JENIS_KEGIATAN.PROGRAM_KERJA && (
-                            <div className="mt-6 rounded-2xl border border-primary/20 bg-primary/5 p-4 sm:p-5">
-                              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                                <div className="flex min-w-0 items-start gap-3">
-                                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                                    <AppIcon name="receipt" size={20} />
-                                  </span>
-                                  <div className="min-w-0">
-                                    <h3 className="font-bold text-text">Pengajuan Pelaksanaan</h3>
-                                    {selectedProposal ? (
-                                      <>
-                                        <p className="mt-1 truncate text-sm font-semibold text-text">
-                                          {proposalTitle(selectedProposal)}
-                                        </p>
-                                        <p className="mt-1 text-xs text-text-muted">
-                                          Proposal sudah dipilih. Bandingkan jadwal pengajuan dengan rencana awal sebelum menetapkan jadwal final.
-                                        </p>
-                                      </>
-                                    ) : (
-                                      <p className="mt-1 text-sm leading-6 text-text-muted">
-                                        Pilih proposal bila sudah tersedia. Tanpa proposal, Program Kerja tetap dapat disimpan sebagai Terencana dan rencana waktunya dipakai sebagai dasar reminder.
-                                      </p>
-                                    )}
-                                  </div>
-                                </div>
-
-                                <div className="flex shrink-0 gap-2">
-                                  {selectedProposal && (
-                                    <button
-                                      type="button"
-                                      onClick={clearProposal}
-                                      className="inline-flex min-h-10 items-center justify-center rounded-xl border border-border bg-card px-3 text-xs font-semibold text-text-muted transition hover:border-error-text/30 hover:text-error-text"
-                                    >
-                                      Hapus
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={() => setProposalPanelOpen(true)}
-                                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-xs font-semibold text-white shadow-sm transition hover:bg-primary-hover"
-                                  >
-                                    <AppIcon name={selectedProposal ? "edit" : "add"} size={17} />
-                                    {selectedProposal ? "Ganti Proposal" : "Masukkan Proposal"}
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-
-                          {activityType === JENIS_KEGIATAN.PROGRAM_KERJA && (
-                            <ProgressiveSection open={false}>
-                              <div className="mt-6 border-t border-border pt-6">
-                                <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                  <div>
-                                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-primary">
-                                      Finalisasi Jadwal Pembina
-                                    </p>
-                                    <p className="mt-1 max-w-3xl text-sm leading-6 text-text-muted">
-                                      Rencana dari pleno tetap disimpan sebagai histori dan dasar reminder. PelaksanaanKegiatan serta SesiAbsensi baru dibuat dari jadwal final ini.
-                                    </p>
-                                  </div>
-                                  <span className="w-fit rounded-full bg-primary/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-primary">
-                                    {form.finalScheduleSource === "proposal"
-                                      ? "Dari Pengajuan"
-                                      : form.finalScheduleSource === "manual"
-                                        ? "Diedit Pembina"
-                                        : "Dari Rencana"}
-                                  </span>
-                                </div>
-
-                                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                                  <div className="rounded-2xl border border-border bg-surface p-4">
-                                    <div className="flex items-center justify-between gap-3">
-                                      <p className="text-[10px] font-bold uppercase tracking-wider text-text-muted">
-                                        Rencana dari Pleno
-                                      </p>
-                                      <span className="rounded-full bg-card px-2.5 py-1 text-[10px] font-bold text-text-muted">
-                                        Reminder
-                                      </span>
-                                    </div>
-                                    <p className="mt-2 text-sm font-bold leading-6 text-text">
-                                      {scheduleSummary(form, baseSessions)}
-                                    </p>
-                                    <button
-                                      type="button"
-                                      onClick={() => applyScheduleToFinal("planned")}
-                                      className="mt-4 inline-flex min-h-9 items-center justify-center gap-2 rounded-xl border border-border bg-card px-3 text-xs font-semibold text-text-muted transition hover:border-primary/40 hover:text-primary"
-                                    >
-                                      <AppIcon name="check" size={16} />
-                                      Gunakan Rencana Awal
-                                    </button>
-                                  </div>
-
-                                  <div
-                                    className={`rounded-2xl border p-4 ${
-                                      proposalScheduleIsDifferent
-                                        ? "border-amber-400/40 bg-amber-50/40"
-                                        : "border-border bg-surface"
-                                    }`}
-                                  >
-                                    <div className="flex items-center justify-between gap-3">
-                                      <p className="text-[10px] font-bold uppercase tracking-wider text-text-muted">
-                                        Jadwal dari Pengajuan
-                                      </p>
-                                      {proposalSchedule ? (
-                                        <span
-                                          className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${
-                                            proposalScheduleIsDifferent
-                                              ? "bg-amber-100 text-amber-700"
-                                              : "bg-primary/10 text-primary"
-                                          }`}
-                                        >
-                                          {proposalScheduleIsDifferent ? "Berbeda" : "Sesuai"}
-                                        </span>
-                                      ) : (
-                                        <span className="rounded-full bg-input px-2.5 py-1 text-[10px] font-bold text-text-muted">
-                                          Belum terstruktur
-                                        </span>
-                                      )}
-                                    </div>
-
-                                    <p className="mt-2 text-sm font-bold leading-6 text-text">
-                                      {proposalSchedule
-                                        ? scheduleSummary(
-                                            proposalSchedule,
-                                            proposalBaseSessions
-                                          )
-                                        : "Proposal belum memiliki field jadwal pengajuan yang dapat dibandingkan otomatis."}
-                                    </p>
-
-                                    {proposalSchedule ? (
-                                      <button
-                                        type="button"
-                                        onClick={() => applyScheduleToFinal("proposal")}
-                                        className="mt-4 inline-flex min-h-9 items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/5 px-3 text-xs font-semibold text-primary transition hover:bg-primary/10"
-                                      >
-                                        <AppIcon name="schedule" size={16} />
-                                        Gunakan Jadwal Pengajuan
-                                      </button>
-                                    ) : (
-                                      <p className="mt-3 text-xs leading-5 text-text-muted">
-                                        PDF tetap dapat dipakai sebagai dokumen pendukung. Untuk perbandingan otomatis, dashboard pengirim nantinya perlu menyimpan tanggal pengajuan sebagai field terstruktur.
-                                      </p>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {proposalScheduleIsDifferent && (
-                                  <div className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-50 px-4 py-3">
-                                    <p className="text-xs font-bold text-amber-800">
-                                      Jadwal pengajuan berbeda dengan rencana awal.
-                                    </p>
-                                    <p className="mt-1 text-xs leading-5 text-amber-700">
-                                      Pembina dapat mempertahankan rencana awal, memakai jadwal pengajuan, atau mengedit jadwal final secara manual.
-                                    </p>
-                                  </div>
-                                )}
-
-                                <div className="mt-6 rounded-2xl border border-primary/20 bg-primary/5 p-4 sm:p-5">
-                                  <div className="mb-4">
-                                    <p className="text-sm font-bold text-text">
-                                      Jadwal Final
-                                    </p>
-                                    <p className="mt-1 text-xs leading-5 text-text-muted">
-                                      Jadwal ini menjadi source of truth untuk PelaksanaanKegiatan dan SesiAbsensi.
-                                    </p>
-                                  </div>
-
-                                  <div className="grid grid-cols-2 gap-3">
-                                    <RecurrenceChoice
-                                      active={form.finalScheduleMode === "once"}
-                                      icon="event_available"
-                                      title="Sekali"
-                                      description="Satu blok pelaksanaan final"
-                                      onClick={() => setFinalScheduleMode("once")}
-                                    />
-                                    <RecurrenceChoice
-                                      active={form.finalScheduleMode === "recurring"}
-                                      icon="calendar_month"
-                                      title="Berulang"
-                                      description="Blok final diulang mingguan"
-                                      onClick={() => setFinalScheduleMode("recurring")}
-                                    />
-                                  </div>
-
-                                  <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                                    <ScheduleCard title="Mulai Final" tone="primary">
-                                      <FormField label="Tanggal mulai" required>
-                                        <input
-                                          type="date"
-                                          value={form.finalStartDate}
-                                          onChange={updateFinalStartDate}
-                                          className={inputClass}
-                                        />
-                                      </FormField>
-                                    </ScheduleCard>
-
-                                    <ScheduleCard title="Selesai Final">
-                                      <FormField label="Tanggal selesai" required>
-                                        <input
-                                          type="date"
-                                          min={form.finalStartDate || undefined}
-                                          value={form.finalEndDate}
-                                          onChange={updateFinalEndDate}
-                                          className={inputClass}
-                                        />
-                                      </FormField>
-                                    </ScheduleCard>
-                                  </div>
-
-                                  <div
-                                    className={`mt-4 flex flex-col gap-2 rounded-2xl border px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${
-                                      hasValidFinalDateRange
-                                        ? "border-primary/20 bg-card"
-                                        : "border-border bg-surface"
-                                    }`}
-                                  >
-                                    <div>
-                                      <p className="text-[10px] font-bold uppercase tracking-wider text-text-muted">
-                                        Jadwal Final Terdeteksi
-                                      </p>
-                                      <p className="mt-1 text-base font-bold text-text">
-                                        {finalDayCount
-                                          ? `${finalDayCount} hari · ${finalDayCount} sesi absensi per pelaksanaan`
-                                          : "0 hari"}
-                                      </p>
-                                    </div>
-                                    <span
-                                      className={`w-fit rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-wider ${
-                                        hasValidFinalAttendanceSchedule
-                                          ? "bg-primary/10 text-primary"
-                                          : "bg-error-bg text-error-text"
-                                      }`}
-                                    >
-                                      {finalValidSessionCount}/{finalDayCount} valid
-                                    </span>
-                                  </div>
-
-                                  {hasValidFinalDateRange && (
-                                    <div className="mt-4 max-h-80 space-y-3 overflow-y-auto rounded-2xl border border-border bg-surface p-3 overscroll-contain [scrollbar-gutter:stable] sm:p-4">
-                                      {finalBaseSessions.map((session) => {
-                                        const hasCompleteTime = Boolean(
-                                          session.startTime && session.endTime
-                                        );
-                                        const invalid =
-                                          hasCompleteTime && !session.valid;
-
-                                        return (
-                                          <div
-                                            key={session.date}
-                                            className={`rounded-2xl border bg-card p-4 transition ${
-                                              invalid
-                                                ? "border-error-text/40"
-                                                : "border-border"
-                                            }`}
-                                          >
-                                            <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_160px_160px] md:items-end">
-                                              <div className="min-w-0">
-                                                <p className="text-[10px] font-bold uppercase tracking-wider text-primary">
-                                                  Sesi Final {session.dayOffset + 1}
-                                                </p>
-                                                <p className="mt-1 text-sm font-bold text-text">
-                                                  {formatDateOnly(session.date)}
-                                                </p>
-                                                <p className="mt-1 text-xs text-text-muted">
-                                                  {session.valid
-                                                    ? formatDuration(
-                                                        session.durationMinutes
-                                                      )
-                                                    : "Jam belum valid"}
-                                                </p>
-                                              </div>
-
-                                              <FormField label="Mulai" required>
-                                                <input
-                                                  type="time"
-                                                  value={session.startTime}
-                                                  onChange={updateFinalDailySchedule(
-                                                    session.date,
-                                                    "startTime"
-                                                  )}
-                                                  className={`${inputClass} ${
-                                                    invalid
-                                                      ? "border-error-text focus:border-error-text"
-                                                      : ""
-                                                  }`}
-                                                />
-                                              </FormField>
-
-                                              <FormField label="Selesai" required>
-                                                <input
-                                                  type="time"
-                                                  value={session.endTime}
-                                                  onChange={updateFinalDailySchedule(
-                                                    session.date,
-                                                    "endTime"
-                                                  )}
-                                                  className={`${inputClass} ${
-                                                    invalid
-                                                      ? "border-error-text focus:border-error-text"
-                                                      : ""
-                                                  }`}
-                                                />
-                                              </FormField>
-                                            </div>
-
-                                            {invalid && (
-                                              <p className="mt-3 rounded-xl bg-error-bg px-3 py-2 text-xs font-semibold text-error-text">
-                                                Jam selesai harus lebih akhir dari jam mulai.
-                                              </p>
-                                            )}
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-
-                                  {form.finalScheduleMode === "recurring" && (
-                                    <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                                      <FormField label="Ulangi setiap">
-                                        <div className="relative">
-                                          <input
-                                            type="number"
-                                            min="1"
-                                            max="52"
-                                            value={form.finalRecurrenceInterval}
-                                            onChange={updateFinalField(
-                                              "finalRecurrenceInterval"
-                                            )}
-                                            className={`${inputClass} pr-20`}
-                                          />
-                                          <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-xs font-semibold text-text-muted">
-                                            minggu
-                                          </span>
-                                        </div>
-                                      </FormField>
-
-                                      <FormField label="Berulang sampai" required>
-                                        <input
-                                          type="date"
-                                          min={
-                                            form.finalEndDate ||
-                                            form.finalStartDate ||
-                                            undefined
-                                          }
-                                          max={periodEndDate || undefined}
-                                          value={form.finalRecurrenceUntil}
-                                          onChange={updateFinalField(
-                                            "finalRecurrenceUntil"
-                                          )}
-                                          className={inputClass}
-                                        />
-                                      </FormField>
-                                    </div>
-                                  )}
-
-                                  {hasValidFinalAttendanceSchedule &&
-                                    finalOccurrencePreview.length > 0 && (
-                                      <div className="mt-5 rounded-2xl border border-border bg-card p-4">
-                                        <div className="flex items-center justify-between gap-3">
-                                          <div>
-                                            <p className="text-sm font-bold text-text">
-                                              Preview Jadwal Final
-                                            </p>
-                                            <p className="mt-1 text-xs text-text-muted">
-                                              {form.finalScheduleMode ===
-                                              "recurring"
-                                                ? `${finalOccurrencePreview.length} pelaksanaan final terdeteksi.`
-                                                : "Satu pelaksanaan final akan dibuat."}
-                                            </p>
-                                          </div>
-                                          <span className="rounded-full bg-primary px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white">
-                                            Final
-                                          </span>
-                                        </div>
-
-                                        <div className="mt-4 grid max-h-96 grid-cols-1 gap-3 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] sm:grid-cols-2">
-                                          {finalOccurrencePreview.map(
-                                            (occurrence, index) => (
-                                              <div
-                                                key={`${occurrence.startDate}-final-${index}`}
-                                                className="rounded-xl border border-border bg-surface px-3 py-3"
-                                              >
-                                                <p className="text-[10px] font-bold uppercase tracking-wider text-primary">
-                                                  {form.finalScheduleMode ===
-                                                  "recurring"
-                                                    ? `Minggu ${index + 1}`
-                                                    : `Pelaksanaan ${index + 1}`}
-                                                </p>
-                                                <p className="mt-1 text-xs font-semibold text-text">
-                                                  {occurrence.startDate ===
-                                                  occurrence.endDate
-                                                    ? formatDateOnly(
-                                                        occurrence.startDate
-                                                      )
-                                                    : `${formatDateOnly(
-                                                        occurrence.startDate
-                                                      )} - ${formatDateOnly(
-                                                        occurrence.endDate
-                                                      )}`}
-                                                </p>
-                                                <p className="mt-1 text-[11px] text-text-muted">
-                                                  {occurrence.sessions.length} sesi absensi
-                                                </p>
-                                              </div>
-                                            )
-                                          )}
-                                        </div>
-                                      </div>
-                                    )}
-                                </div>
-                              </div>
-                            </ProgressiveSection>
-                          )}
-
-                          {activityType === JENIS_KEGIATAN.RAPAT && (
+                  {activityType === JENIS_KEGIATAN.RAPAT && (
                             <div className="mt-6">
                               <FormField label="Penanggung Jawab">
                                 <select
@@ -2218,156 +1456,6 @@ export default function SeleksiKegiatanModal({
                             </div>
                           )}
 
-                          {activityType === JENIS_KEGIATAN.PROGRAM_KERJA && (
-                            <ProgressiveSection open={false}>
-                              <div className="mt-6 border-t border-border pt-6">
-                                <div className="mb-5">
-                                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-primary">
-                                    Struktur Final Pembina
-                                  </p>
-                                  <p className="mt-1 text-sm leading-6 text-text-muted">
-                                    Proposal dan struktur berada di level program/series; tidak perlu ditentukan ulang untuk setiap occurrence.
-                                  </p>
-                                </div>
-
-                                <div className="mb-5 rounded-2xl border border-border bg-surface p-4">
-                                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                    <div>
-                                      <p className="text-sm font-bold text-text">
-                                        Usulan Kepanitiaan
-                                      </p>
-                                      <p className="mt-1 text-xs leading-5 text-text-muted">
-                                        Data ini bersifat rekomendatif dari pengirim. Pembina tetap menentukan struktur final.
-                                      </p>
-                                    </div>
-
-                                    {proposedCommittee.mode === MODE_KEPANITIAAN_USULAN.DIUSULKAN && (
-                                      <button
-                                        type="button"
-                                        onClick={applyProposedCommittee}
-                                        className="inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/5 px-3 text-xs font-semibold text-primary transition hover:bg-primary/10"
-                                      >
-                                        <AppIcon name="groups" size={16} />
-                                        Terapkan Usulan
-                                      </button>
-                                    )}
-                                  </div>
-
-                                  {proposedCommittee.mode === MODE_KEPANITIAAN_USULAN.DITENTUKAN_PEMBINA ? (
-                                    <div className="mt-4 rounded-xl bg-card px-3 py-3 text-xs leading-5 text-text-muted">
-                                      Pengirim menyerahkan penentuan kepanitiaan sepenuhnya kepada Pembina.
-                                    </div>
-                                  ) : proposedCommittee.mode === MODE_KEPANITIAAN_USULAN.DIUSULKAN ? (
-                                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                      <ProposalMeta
-                                        label="Ketua / PJ Diusulkan"
-                                        value={
-                                          memberMap.get(
-                                            String(
-                                              proposedCommittee.organiserMemberId
-                                            )
-                                          )?.namaLengkap ||
-                                          memberMap.get(
-                                            String(
-                                              proposedCommittee.organiserMemberId
-                                            )
-                                          )?.nama ||
-                                          proposedCommittee.organiserMemberId ||
-                                          "Belum diusulkan"
-                                        }
-                                      />
-                                      <ProposalMeta
-                                        label="Jumlah Panitia"
-                                        value={`${proposedCommittee.memberIds.length} anggota`}
-                                      />
-                                    </div>
-                                  ) : (
-                                    <div className="mt-4 rounded-xl bg-card px-3 py-3 text-xs leading-5 text-text-muted">
-                                      Pengajuan ini belum memiliki data usulan kepanitiaan terstruktur. Pembina dapat menetapkan struktur secara manual.
-                                    </div>
-                                  )}
-                                </div>
-
-                                <FormField label="Ketua Pelaksana / PJ">
-                                  <select
-                                    value={form.organiserMemberId}
-                                    onChange={updateField("organiserMemberId")}
-                                    className={inputClass}
-                                  >
-                                    <option value="">Belum ditentukan</option>
-                                    {officialMembers.map((member) => (
-                                      <option key={member.id} value={member.id}>
-                                        {member.namaLengkap || member.nama || "Anggota tanpa nama"}
-                                        {member.jabatanOrganisasi || member.jabatan
-                                          ? ` — ${member.jabatanOrganisasi || member.jabatan}`
-                                          : " — Unknown"}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </FormField>
-
-                                <div className="mt-5">
-                                  <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                                    <div>
-                                      <p className="text-sm font-semibold text-text">List Panitia yang Terlibat</p>
-                                      <p className="mt-1 text-xs text-text-muted">
-                                        {form.committeeMemberIds.length} anggota dipilih.
-                                      </p>
-                                    </div>
-                                    <input
-                                      type="search"
-                                      value={committeeSearch}
-                                      onChange={(event) => setCommitteeSearch(event.target.value)}
-                                      placeholder="Cari anggota"
-                                      className={`${inputClass} sm:max-w-64`}
-                                    />
-                                  </div>
-
-                                  <div className="max-h-72 overflow-y-auto rounded-2xl border border-border bg-surface p-2 overscroll-contain">
-                                    {filteredCommitteeMembers.length ? (
-                                      filteredCommitteeMembers.map((member) => {
-                                        const checked = form.committeeMemberIds.includes(member.id);
-                                        const memberName = member.namaLengkap || member.nama || "Unknown";
-                                        const memberPosition =
-                                          member.jabatanOrganisasi || member.jabatan || "Unknown";
-                                        return (
-                                          <label
-                                            key={member.id}
-                                            className={`flex cursor-pointer items-center gap-3 rounded-xl px-3 py-3 transition ${
-                                              checked ? "bg-primary/10" : "hover:bg-card"
-                                            }`}
-                                          >
-                                            <input
-                                              type="checkbox"
-                                              checked={checked}
-                                              onChange={() => toggleCommitteeMember(member.id)}
-                                              className="h-4 w-4 accent-primary"
-                                            />
-                                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-card text-primary shadow-sm">
-                                              <AppIcon name="person" size={18} />
-                                            </span>
-                                            <span className="min-w-0 flex-1">
-                                              <span className="block truncate text-sm font-semibold text-text">
-                                                {memberName}
-                                              </span>
-                                              <span className="block truncate text-xs text-text-muted">
-                                                {memberPosition}
-                                              </span>
-                                            </span>
-                                          </label>
-                                        );
-                                      })
-                                    ) : (
-                                      <p className="px-3 py-6 text-center text-sm text-text-muted">
-                                        Anggota tidak ditemukan.
-                                      </p>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </ProgressiveSection>
-                          )}
-
                   {error && (
                     <div
                       role="alert"
@@ -2382,7 +1470,6 @@ export default function SeleksiKegiatanModal({
                       type="button"
                       onClick={() => {
                         setStep("select");
-                        setProposalPanelOpen(false);
                         setError("");
                       }}
                       disabled={saving}
@@ -2407,106 +1494,6 @@ export default function SeleksiKegiatanModal({
                   </footer>
                 </div>
 
-                <div
-                  className={`flex h-full min-h-0 w-1/2 shrink-0 flex-col p-5 transition-opacity duration-300 sm:p-6 ${
-                    proposalPanelOpen ? "opacity-100" : "pointer-events-none opacity-40"
-                  }`}
-                  aria-hidden={!proposalPanelOpen}
-                >
-                  <div className="mb-5 flex items-center justify-between gap-4">
-                    <button
-                      type="button"
-                      onClick={() => setProposalPanelOpen(false)}
-                      className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-semibold text-text-muted transition hover:border-primary/40 hover:text-primary"
-                    >
-                      <AppIcon name="arrow_back" size={18} />
-                      Kembali
-                    </button>
-
-                    <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-bold text-primary">
-                      {proposalOptions.length} proposal
-                    </span>
-                  </div>
-
-                  <div className="mb-4">
-                    <input
-                      type="search"
-                      value={proposalSearch}
-                      onChange={(event) => setProposalSearch(event.target.value)}
-                      placeholder="Cari proposal, pengunggah, jabatan, atau ID"
-                      className={inputClass}
-                    />
-                  </div>
-
-                  <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]">
-                    {proposalOptions.length ? (
-                      proposalOptions.map((proposal) => {
-                        const uploader = resolveUploader(proposal, memberMap);
-                        const linked = Boolean(proposal.idKegiatan);
-                        const selected = proposal.id === form.proposalId;
-
-                        return (
-                          <button
-                            key={proposal.id}
-                            type="button"
-                            disabled={linked}
-                            onClick={() => selectProposal(proposal)}
-                            className={`group w-full rounded-2xl border p-4 text-left transition duration-300 ease-out ${
-                              linked
-                                ? "cursor-not-allowed border-border bg-input opacity-55"
-                                : selected
-                                  ? "border-primary bg-primary/10 shadow-sm"
-                                  : "border-border bg-card hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-bold text-text">
-                                  {proposalTitle(proposal)}
-                                </p>
-                                <p className="mt-1 truncate text-xs text-text-muted">
-                                  {proposal.namaFile || "File proposal tidak terdeteksi"}
-                                </p>
-                              </div>
-
-                              <span
-                                className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${
-                                  linked
-                                    ? "bg-input text-text-muted"
-                                    : selected
-                                      ? "bg-primary text-white"
-                                      : "bg-primary/10 text-primary"
-                                }`}
-                              >
-                                {linked ? "Terhubung" : selected ? "Dipilih" : proposal.status || "Unknown"}
-                              </span>
-                            </div>
-
-                            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                              <ProposalMeta label="Pengunggah" value={uploader.name} />
-                              <ProposalMeta label="Jabatan" value={uploader.position} />
-                              <div className="sm:col-span-2">
-                                <ProposalMeta label="User ID" value={uploader.id} mono />
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })
-                    ) : (
-                      <div className="rounded-2xl border border-dashed border-border bg-surface px-5 py-10 text-center">
-                        <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                          <AppIcon name="receipt" size={23} />
-                        </span>
-                        <p className="mt-4 font-semibold text-text">
-                          Proposal tidak ditemukan
-                        </p>
-                        <p className="mt-1 text-sm text-text-muted">
-                          Belum ada proposal yang cocok dengan pencarian.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
               </div>
             </div>
           </form>

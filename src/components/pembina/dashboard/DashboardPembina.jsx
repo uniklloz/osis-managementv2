@@ -243,10 +243,6 @@ export default function DashboardPembina() {
         description="Pantau anggota, kehadiran, kegiatan, pendaftaran, dan informasi OSIS dalam satu halaman."
         action={
           <div className="flex flex-wrap gap-3">
-            <DisabledAction icon="download" variant="outline">
-              Export Ringkasan
-            </DisabledAction>
-
             <Link
               href="/pembina/data-anggota"
               className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white"

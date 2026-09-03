@@ -22,8 +22,6 @@ export default function Authenticator({ children }) {
   const {
     user,
     role,
-    logout,
-    authLoading,
     accessLoading,
   } = useAuth();
 
@@ -118,14 +116,6 @@ export default function Authenticator({ children }) {
     }
   }, [redirectTo, currentPath, router]);
 
-  async function handleLogout() {
-    try {
-      await logout();
-    } catch (error) {
-      console.error("DEBUG LOGOUT ERROR:", error);
-    }
-  }
-
   if (accessLoading || redirectTo) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-surface">
@@ -136,20 +126,5 @@ export default function Authenticator({ children }) {
     );
   }
 
-  return (
-    <>
-      {user && (
-        <button
-          type="button"
-          onClick={handleLogout}
-          disabled={authLoading}
-          className="fixed right-4 top-4 z-[9999] rounded-xl bg-error-text px-4 py-2 text-sm font-semibold text-white shadow-lg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {authLoading ? "Logout..." : "Logout Debug"}
-        </button>
-      )}
-
-      {children}
-    </>
-  );
+  return <>{children}</>;
 }

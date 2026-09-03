@@ -15,6 +15,20 @@ import {
   STATUS_KEGIATAN,
 } from "../konfigurasiManajemenKegiatan";
 
+function sortByNearestStart(rows) {
+  const now = Date.now();
+  return [...rows].sort((a, b) => {
+    const aDone = a?.status === STATUS_KEGIATAN.SELESAI ? 1 : 0;
+    const bDone = b?.status === STATUS_KEGIATAN.SELESAI ? 1 : 0;
+
+    if (aDone !== bDone) return aDone - bDone;
+
+    const aStamp = a?.waktuMulai ? new Date(a.waktuMulai).getTime() : Number.MAX_SAFE_INTEGER;
+    const bStamp = b?.waktuMulai ? new Date(b.waktuMulai).getTime() : Number.MAX_SAFE_INTEGER;
+    return Math.abs(aStamp - now) - Math.abs(bStamp - now);
+  });
+}
+
 export default function RapatSection({
   rows,
   search,
@@ -26,10 +40,12 @@ export default function RapatSection({
 }) {
   const keyword = search.trim().toLowerCase();
 
-  const filtered = rows.filter(
-    (item) =>
-      kegiatanCocokPencarian(item, keyword) &&
-      (statusFilter === "semua" || item.status === statusFilter)
+  const filtered = sortByNearestStart(
+    rows.filter(
+      (item) =>
+        kegiatanCocokPencarian(item, keyword) &&
+        (statusFilter === "semua" || item.status === statusFilter)
+    )
   );
 
   const terjadwal = rows.filter(
@@ -138,11 +154,12 @@ export default function RapatSection({
                       {participantCount} peserta final
                     </span>
                   )}
-                  {activity.statusJadwal === "difinalisasi" && (
-                    <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700 ring-1 ring-inset ring-emerald-200">
-                      Jadwal ditetapkan
-                    </span>
-                  )}
+                  {activity.status !== STATUS_KEGIATAN.DRAF &&
+                    activity.statusJadwal === "difinalisasi" && (
+                      <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+                        Jadwal ditetapkan
+                      </span>
+                    )}
                   {activity?.pengajuanRapat?.sumber === "anggota" && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2.5 py-1 text-[10px] font-bold text-violet-700 ring-1 ring-inset ring-violet-200">
                       <AppIcon name="assignment_turned_in" size={13} />

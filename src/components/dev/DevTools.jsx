@@ -22,8 +22,8 @@ const DEVTOOLS_CONFIG = {
   enabled: true,
 
   pembina: {
-    email: "daffonm@gmail.com",
-    password: "000000Ok",
+    email: "liasyalika75@gmail.com",
+    password: "mutiara2",
 
     // Opsional.
     // Isi jika ingin langsung pindah halaman setelah login.
@@ -32,8 +32,8 @@ const DEVTOOLS_CONFIG = {
   },
 
   anggota: {
-    email: "daffons@gmail.com",
-    password: "000000Ok",
+    email: "haykalm56@gmail.com",
+    password: "kaka2003",
 
     // Contoh: "/anggota/dashboard"
     redirect: "/anggota/dashboard",

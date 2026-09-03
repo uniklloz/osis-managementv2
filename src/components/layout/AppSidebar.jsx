@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import AppIcon from "@/components/global/AppIcon";
+import { useAuth } from "@/context/AuthContext";
 
 function isActiveRoute(pathname, href) {
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -16,6 +18,22 @@ export default function AppSidebar({
   profile,
 }) {
   const pathname = usePathname();
+  const { logout, authLoading } = useAuth();
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    setProfileMenuOpen(false);
+  }, [pathname]);
+
+  const handleLogout = async () => {
+    setProfileMenuOpen(false);
+    try {
+      await logout();
+      onClose?.();
+    } catch {
+      // ignored; auth context already exposes the error state.
+    }
+  };
 
   return (
     <>
@@ -108,20 +126,45 @@ export default function AppSidebar({
         </nav>
 
         <div className="mt-auto border-t border-border px-6 pt-6">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
-              {profile.initials}
-            </div>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setProfileMenuOpen((current) => !current)}
+              className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition hover:bg-input"
+            >
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
+                {profile.initials}
+              </div>
 
-            <div className="min-w-0">
-              <p className="truncate text-sm font-bold text-text">
-                {profile.name}
-              </p>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-bold text-text">
+                  {profile.name}
+                </p>
 
-              <p className="truncate text-[11px] text-text-muted">
-                {profile.roleLabel}
-              </p>
-            </div>
+                <p className="truncate text-[11px] text-text-muted">
+                  {profile.roleLabel}
+                </p>
+              </div>
+
+              <AppIcon name="expand_more" size={18} className="text-text-muted" />
+            </button>
+
+            {profileMenuOpen && (
+              <div className="absolute bottom-full left-0 right-0 z-10 mb-2 overflow-hidden rounded-2xl border border-border bg-card shadow-xl">
+                <button
+                  type="button"
+                  disabled={authLoading}
+                  onClick={handleLogout}
+                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-semibold text-text transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <span className="flex items-center gap-3">
+                    <AppIcon name="logout" size={18} className="text-red-500" />
+                    <span>{authLoading ? "Sedang logout..." : "Log Out"}</span>
+                  </span>
+                  <AppIcon name="chevron_right" size={16} className="text-text-muted" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </aside>
