@@ -569,9 +569,6 @@ function KegiatanListSection({ title, icon, rows, onDetail, tone = "primary" }) 
     </section>
   );
 }
-    </section>
-  );
-}
 
 function ActivityCard({ activity, onDetail }) {
   const startDate = toDate(activity.waktuMulai);

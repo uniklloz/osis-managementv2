@@ -215,7 +215,6 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
   const [reviewNote, setReviewNote] = useState(
     pengajuan?.catatanReview || ""
   );
-  );
   const [schedule, setSchedule] = useState(() => buildInitialSchedule(activity));
   const [savingReview, setSavingReview] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
@@ -248,10 +247,7 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
     [divisi]
   );
 
-  const isMeeting = activity?.jenisKegiatan === JENIS_KEGIATAN.RAPAT;
-  const isProgramKerja = activity?.jenisKegiatan === JENIS_KEGIATAN.PROGRAM_KERJA;
   const pengajuanKey = isMeeting ? "pengajuanRapat" : "pengajuanProgramKerja";
-  const pengajuan = activity?.[pengajuanKey] || {};
   const pengaju =
     activity?.pengaju ||
     memberMap.get(pengajuan?.idPengaju || activity?.pengajuanRapat?.idPengaju) ||
@@ -352,8 +348,6 @@ export default function PengajuanKegiatanReviewModal({ activity, onClose }) {
       await updateDoc("Kegiatan", activity.id, {
         ...(isMeeting ? { pengajuanRapat: nextPayload } : {}),
         ...(isProgramKerja ? { pengajuanProgramKerja: nextPayload } : {}),
-        diperbaruiPada: waktu,
-      });
         diperbaruiPada: waktu,
       });
 
