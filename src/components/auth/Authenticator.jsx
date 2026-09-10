@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 
-const PUBLIC_ROUTES = ["/login", "/register"];
+const PUBLIC_ROUTES = ["/login", "/register", "/cara-registrasi"];
 
 const ROLE_HOME = {
   anggota: "/anggota/dashboard",
@@ -58,9 +58,9 @@ export default function Authenticator({ children }) {
   if (!accessLoading) {
     /*
      * Belum login.
-     * Hanya boleh membuka login dan register.
+     * Root, login, dan register adalah halaman publik.
      */
-    if (!user && !isPublicRoute) {
+    if (!user && !isPublicRoute && !isRootRoute) {
       redirectTo = "/login";
     }
 
